@@ -1,0 +1,39 @@
+#!/usr/bin/perl
+
+my $totaltime=0;
+my $totaljobs=0;
+foreach $line (`squeue -o "%12D %.12L"` ) {
+    chomp( $line );
+    $lineno++;
+
+    my @fields = split(/\s+/,$line);
+    my $nodes = $fields[0];
+    my $walltime = $fields[1];
+    my $days = 0;
+    my $hours = 0;
+    my $minutes = 0;
+    my $seconds = 0;
+    if ($nodes =~ /NODES/) {
+      next;
+    }
+
+    if ($walltime =~ /(.*)-(.*)/) {
+      $days = $1;
+      $walltime = $2;
+    }
+    if ($walltime =~ /(.*):(.*):(.*)/) {
+      $hours = $1;
+      $minutes = $2;
+      $seconds = $3;
+    }
+    my $time = $days*24*3600+$hours*3600+$minutes*60+$seconds;
+    $totaltime += $time * $nodes;
+    $totaljobs += 1;
+
+}
+print `date`;
+printf("Total time (node hours)  : %8.1f\n",$totaltime/3600);
+printf("Total time (node days)   : %8.1f\n",$totaltime/(24*3600));
+printf("Total time (Magnus days) : %8.1f\n",$totaltime/(1480*24*3600));
+printf("Total jobs : %d\n",$totaljobs);
+

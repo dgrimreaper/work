@@ -1,0 +1,152 @@
+#!/usr/bin/perl
+
+use Date::Format;
+
+my %shares;
+my %usage;
+my $start="2015-07-01T00:00:00";
+my $end="2018-09-30T23:59:59";
+my %data;
+my %priorities;
+
+open(SHARES,"sshare -n |");
+while(<SHARES>){
+    next if /^root/;
+    next if /^  /;
+    chomp;
+    my @fields=split;
+    my $project = $fields[0];
+    my $allocation = $fields[1];
+    my $rawusage = $fields[3];
+    $data{$project}={};
+    $data{$project}{'share'}=$allocation;
+    $data{$project}{'susage'}=$rawusage/3600;
+    if ($allocation==0) {
+      $data{$project}{'sfraction'}=0
+    } else {
+      $data{$project}{'sfraction'}=100.0*$data{$project}{'susage'}/$data{$project}{'share'};
+    }
+}
+close SHARES;
+
+open(PRIORITIES,'sprio -h -o "%.10i %.10Y %.10A %.10F %.10J %.10P %.10Q" |');
+# JOBID PRIORITY AGE FAIRSHARE JOBSIZE PARTITION QOS
+while(<PRIORITIES>){
+    chomp;
+    my @fields = split;
+    my $jobid = $fields[0];
+    my $priority = $fields[1];
+    my $age = $fields[2];
+    my $fairshare = $fields[3];
+    my $jobsize = $fields[4];
+    my $partition = $fields[5];
+    my $qos = $fields[6];
+    $jobid =~ s/_$//;
+    $priorities{$jobid}{'priority'}=$priority;
+    $priorities{$jobid}{'age'}=$age;
+    $priorities{$jobid}{'fairshare'}=$fairshare;
+    $priorities{$jobid}{'jobsize'}=$jobsize;
+    $priorities{$jobid}{'partition'}=$partition;
+    $priorities{$jobid}{'qos'}=$qos;
+}
+close PRIORITIES;
+
+#This is more accurate than sshare, but very slow.
+#Need to do this because sshare data now broken.
+foreach $project (keys %data) {
+    $usage=`sacct -n -a -A $project -S $start -E $end --format=jobid,CPUTimeRaw | grep -v batch | awk '{sum+=\$2}END{print sum/3600}'`;
+    $data{$project}{'usage'}=$usage;
+    if ($data{$project}{'share'}==0) {
+      $data{$project}{'usagefraction'}=0
+    } else {
+      $data{$project}{'usagefraction'}=100.0*$data{$project}{'usage'}/$data{$project}{'share'};
+    }
+}
+
+#JOBID USER ACCOUNT NAME ST TIMELIMIT NODES REASON
+#PRIORITY SUBMITTIME USAGE SHARE
+my $lineno = -1;
+my $format = "%10s %8s %15s %14s %6s %12s %5s %8s %12s %10s %12s %8s %8s %6s %9s %8s %9s %6s\n";
+foreach $line (`squeue -o "%8i %8u %15a %.14j %.3t %.12l %.5D %.10r %.10Q"` ) {
+    chomp( $line );
+    $lineno++;
+
+    if ($lineno%30 == 0) {
+      $jobid = 'JOBID';
+      $user = 'USER';
+      $project = 'ACCOUNT';
+      $name = 'NAME';
+      $status = 'STATUS';
+      $timelimit = 'TIMELIMIT';
+      $nodes = 'NODES';
+#      $usage='USAGE';
+#      $usagefraction='%USAGE';
+      $share='SHARE';
+      $susage='USAGE';
+      $reason='REASON';
+      $priority = 'PRIORITY';
+      $submittime = 'SUBMITTIME';
+      $eligibletime = 'ELIGIBLETIME';
+      $sfraction='%USAGE';
+      $age = 'AGE';
+      $fairshare = 'FAIRSHARE';
+      $jobsize = 'JOBSIZE';
+      $partition = 'PARTITION';
+      $qos = 'QOS';
+      printf($format,$jobid,$user,$project,$name,$status,$timelimit,$nodes,$share,$susage,$reason,$eligibletime,$sfraction,$priority,$age,$fairshare,$jobsize,$partition,$qos);
+      #printf($format,$jobid,$user,$project,$name,$status,$timelimit,$nodes,$share,$susage,$reason,$submittime,$sfraction,$priority,$age,$fairshare,$jobsize,$partition,$qos);
+    }
+
+    my @fields = split(/\s+/,$line);
+    my $jobid = $fields[0];
+    if ($jobid =~ /JOBID/) {
+      next;
+    }
+
+    # Deal with job arrays.
+    $jobid =~ s/_$//;
+
+    my $user = $fields[1];
+    my $name = $fields[3];
+    my $status = $fields[4];
+    my $timelimit = $fields[5];
+    my $nodes = $fields[6];
+    my $reason = $fields[7];
+    my $priority = $fields[8];
+    my $project = $fields[2];
+
+    foreach $line2 (`scontrol show job $jobid`) {
+      chomp($line2);
+      if ($line2 =~ /SubmitTime=/) {
+        $submittime = $line2;
+        $submittime =~ s/.*SubmitTime=(.*?)\s+EligibleTime=(.*?)$/$1/;
+        $eligibletime = $line2;
+        $eligibletime =~ s/.*SubmitTime=(.*?)\s+EligibleTime=(.*?)$/$2/;
+      }
+    }
+
+    if (exists $priorities{$jobid}) {
+# Use priority from squeue, since that outputs for all jobs.
+#      $priority=$priorities{$jobid}{'priority'} ;
+      $age=$priorities{$jobid}{'age'};
+      $fairshare=$priorities{$jobid}{'fairshare'};
+      $jobsize=$priorities{$jobid}{'jobsize'};
+      $partition=$priorities{$jobid}{'partition'};
+      $qos=$priorities{$jobid}{'qos'};
+    } else {
+#      $priority='';
+      $age='';
+      $fairshare='';
+      $jobsize='';
+      $partition='';
+      $qos='';
+    }
+    $share=$data{$project}{'share'};
+    $susage=sprintf("%8.0f",$data{$project}{'susage'});
+    $sfraction=sprintf("%6.1f",$data{$project}{'sfraction'});
+    $susage=sprintf("%8.0f",$data{$project}{'usage'});
+    $sfraction=sprintf("%9.1f",$data{$project}{'usagefraction'});
+    printf($format,$jobid,$user,$project,$name,$status,$timelimit,$nodes,$share,$susage,$reason,$eligibletime,$sfraction,$priority,$age,$fairshare,$jobsize,$partition,$qos);
+    #printf($format,$jobid,$user,$project,$name,$status,$timelimit,$nodes,$share,$susage,$reason,$submittime,$sfraction,$priority,$age,$fairshare,$jobsize,$partition,$qos);
+}
+

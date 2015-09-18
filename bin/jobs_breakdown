@@ -1,0 +1,117 @@
+#!/usr/bin/perl
+
+use POSIX;
+
+my %shares;
+my $start="2015-09-01T08:00:00";
+my $end="2015-12-31T23:59:59";
+
+sub toGB {
+  my $num = $_[0];
+  my $amount = 0;
+  if ($num =~ s/[Gg].*//) { $amount = $num };
+  if ($num =~ s/[Mm].*//) { $amount = $num/1000 };
+  if ($num =~ s/[Kk].*//) { $amount = $num/1000000 };
+  return $amount;
+}
+
+sub toHours {
+  #[DD-[hh:]]mm:ss
+  /(?:(\d+)-)?(?:(\d+):)?(\d+):(\d+)/;
+  $answer=$1*24 + $2 + $3/60 + $4/3600;
+  return $answer;
+}
+
+sub lbound {
+  #[128-256) - returns 128
+  $_[0] =~ /(\d+)-\d+/;
+  return $1;
+}
+
+sub histogram {
+  my $n = shift;
+  my $histlow = "0";
+  my $histhigh = "0";
+  if ($n<1) {
+    $histlow = "0";
+    $histhigh = "0";
+  } else {
+    my $tmp = floor(log($n) / log(2));
+    $histlow = 2 ** ($tmp);
+    $histhigh = 2 ** ($tmp+1);
+  }
+  return "[$histlow\-$histhigh)";
+}
+
+my %sizehist;
+my %nodes;
+my $nodehist;
+my $memhist;
+my %cputime;
+my %walltime;
+open(SACCT,"sacct -n -a -P -S $start -E $end --format=jobid,user,account,reqcpus,alloccpus,nnodes,reqmem,MaxRSS,MaxVMSize,State,CPUTimeRAW,NCPUS,Elapsed |");
+while(<SACCT>){
+    next if /^[0-9]*\.batch/; # remove .batch but leave in job array components.
+    chomp;
+    my @fields=split /\|/;
+    my $jobid     = $fields[0];
+    my $node      = $fields[5];
+    my $state     = $fields[9];
+    next if $state =~ /PENDING/;
+    my $size_req  = toGB($fields[6]);
+    my $size_used = toGB($fields[7]);
+    my $cputimeraw   = $fields[10];
+    my $ncpus   = $fields[11];
+    my $elapsed = $fields[12];
+    my $elapsedH = toHours($elapsed);
+    my $memhist = histogram($size_req);
+    my $nodehist = histogram($node);
+    if (not exists $sizehist{$memhist}) { $sizehist{$memhist} = 0; }
+    if (not exists $nodes{$nodehist}) { $nodes{$nodehist} = 0; }
+    if (not exists $cputime{'bynodes'}{$nodehist}) { $cputime{'bynodes'}{$nodehist} = 0; }
+    if (not exists $cputime{'bymemreq'}{$memhist}) { $cputime{'bymemreq'}{$memhist} = 0; }
+    if (not exists $walltime{'bymemreq'}{$memhist}) { $walltime{'bymemreq'}{$memhist} = 0; }
+    if (not exists $walltime{'bynodereq'}{$memhist}) { $walltime{'bynodereq'}{$memhist} = 0; }
+    if (not exists $walltime{'maxformemreq'}{$memhist}) { $walltime{'maxformemreq'}{$memhist} = 0; }
+    if (not exists $walltime{'maxfornodereq'}{$nodehist}) { $walltime{'maxfornodereq'}{$nodehist} = 0; }
+    $sizehist{$memhist} += 1;
+    $nodes{$nodehist} += 1;
+    $cputime{'bynodes'}{$nodehist} += $cputimeraw/3600;
+    $cputime{'bymemreq'}{$memhist} += $cputimeraw/3600;
+    if ($ncpus>0) {
+      $walltime{'bymemreq'}{$memhist} += $elapsedH;
+      $walltime{'bynodereq'}{$nodehist} += $elapsedH;
+      if ($elapsedH > $walltime{'maxformemreq'}{$memhist}) {$walltime{'maxformemreq'}{$memhist} = $elapsedH; }
+      if ($elapsedH > $walltime{'maxfornodereq'}{$nodehist}) {$walltime{'maxfornodereq'}{$nodehist} = $elapsedH; }
+    }
+}
+close SACCT;
+
+print "Start: $start\n";
+print "End: $end\n";
+
+print "By memory request\n";
+printf "%12s %12s %15s %15s %15s\n","Request (GB)","Number","Usage (coreH)","Walltime(ave) (H)","Walltime(max) (H)";
+my $check = 0;
+my $usage = 0;
+foreach $size (sort {&lbound($a) <=> &lbound($b)} keys %sizehist) {
+  printf "%12s %12d %15.2f %15.2f %15.2f\n",$size,$sizehist{$size},$cputime{'bymemreq'}{$size},$walltime{'bymemreq'}{$size}/$sizehist{$size},$walltime{'maxformemreq'}{$size};
+  $check += $sizehist{$size};
+  $usage += $cputime{'bymemreq'}{$size};
+}
+print "Total jobs = $check\n";
+print "Total usage = $usage\n";
+
+print "\n";
+print "By node request\n";
+printf "%12s %12s %15s %15s %15s\n","Nodes","Number","Usage (coreH)","Walltime(ave) (H)","Walltime(max) (H)";
+my $check = 0;
+my $usage = 0;
+foreach $node (sort {&lbound($a) <=> &lbound($b)} keys %nodes) {
+  printf "%12s %12d %15.2f %15.2f %15.2f\n",$node,$nodes{$node},$cputime{'bynodes'}{$node},$walltime{'bynodereq'}{$node}/$nodes{$node},$walltime{'maxfornodereq'}{$node};
+  $check += $nodes{$node};
+  $usage += $cputime{'bynodes'}{$node};
+}
+print "Total jobs = $check\n";
+print "Total usage = $usage\n";
+
