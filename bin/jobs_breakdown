@@ -3,7 +3,7 @@
 use POSIX;
 
 my %shares;
-my $start="2015-09-01T08:00:00";
+my $start="2015-01-01T08:00:00";
 my $end="2015-12-31T23:59:59";
 
 sub toGB {
@@ -48,7 +48,12 @@ my %nodes;
 my $nodehist;
 my $memhist;
 my %cputime;
-my %walltime;
+my %elapsed;
+my %usage;
+my $totaljobs = 0;
+my $totalcputime = 0;
+my $totalusage = 0;
+
 open(SACCT,"sacct -n -a -P -S $start -E $end --format=jobid,user,account,reqcpus,alloccpus,nnodes,reqmem,MaxRSS,MaxVMSize,State,CPUTimeRAW,NCPUS,Elapsed |");
 while(<SACCT>){
     next if /^[0-9]*\.batch/; # remove .batch but leave in job array components.
@@ -68,21 +73,28 @@ while(<SACCT>){
     my $nodehist = histogram($node);
     if (not exists $sizehist{$memhist}) { $sizehist{$memhist} = 0; }
     if (not exists $nodes{$nodehist}) { $nodes{$nodehist} = 0; }
-    if (not exists $cputime{'bynodes'}{$nodehist}) { $cputime{'bynodes'}{$nodehist} = 0; }
+    if (not exists $cputime{'bynodereq'}{$nodehist}) { $cputime{'bynodereq'}{$nodehist} = 0; }
     if (not exists $cputime{'bymemreq'}{$memhist}) { $cputime{'bymemreq'}{$memhist} = 0; }
-    if (not exists $walltime{'bymemreq'}{$memhist}) { $walltime{'bymemreq'}{$memhist} = 0; }
-    if (not exists $walltime{'bynodereq'}{$memhist}) { $walltime{'bynodereq'}{$memhist} = 0; }
-    if (not exists $walltime{'maxformemreq'}{$memhist}) { $walltime{'maxformemreq'}{$memhist} = 0; }
-    if (not exists $walltime{'maxfornodereq'}{$nodehist}) { $walltime{'maxfornodereq'}{$nodehist} = 0; }
+    if (not exists $elapsed{'bymemreq'}{$memhist}) { $elapsed{'bymemreq'}{$memhist} = 0; }
+    if (not exists $elapsed{'bynodereq'}{$memhist}) { $elapsed{'bynodereq'}{$memhist} = 0; }
+    if (not exists $elapsed{'maxformemreq'}{$memhist}) { $elapsed{'maxformemreq'}{$memhist} = 0; }
+    if (not exists $elapsed{'maxfornodereq'}{$nodehist}) { $elapsed{'maxfornodereq'}{$nodehist} = 0; }
+    if (not exists $usage{'bynodereq'}{$nodehist}) { $usage{'bynodereq'}{$nodehist} = 0; }
+    if (not exists $usage{'bymemreq'}{$memhist}) { $usage{'bymemreq'}{$memhist} = 0; }
+    $totaljobs += 1;
     $sizehist{$memhist} += 1;
     $nodes{$nodehist} += 1;
-    $cputime{'bynodes'}{$nodehist} += $cputimeraw/3600;
+    $totalcputime += $cputimeraw/3600;
+    $cputime{'bynodereq'}{$nodehist} += $cputimeraw/3600;
     $cputime{'bymemreq'}{$memhist} += $cputimeraw/3600;
+    $totalusage += $elapsedH * $node;
     if ($ncpus>0) {
-      $walltime{'bymemreq'}{$memhist} += $elapsedH;
-      $walltime{'bynodereq'}{$nodehist} += $elapsedH;
-      if ($elapsedH > $walltime{'maxformemreq'}{$memhist}) {$walltime{'maxformemreq'}{$memhist} = $elapsedH; }
-      if ($elapsedH > $walltime{'maxfornodereq'}{$nodehist}) {$walltime{'maxfornodereq'}{$nodehist} = $elapsedH; }
+      $elapsed{'bymemreq'}{$memhist} += $elapsedH;
+      $elapsed{'bynodereq'}{$nodehist} += $elapsedH;
+      $usage{'bymemreq'}{$memhist} += $elapsedH * $node;
+      $usage{'bynodereq'}{$nodehist} += $elapsedH * $node;
+      if ($elapsedH > $elapsed{'maxformemreq'}{$memhist}) {$elapsed{'maxformemreq'}{$memhist} = $elapsedH; }
+      if ($elapsedH > $elapsed{'maxfornodereq'}{$nodehist}) {$elapsed{'maxfornodereq'}{$nodehist} = $elapsedH; }
     }
 }
 close SACCT;
@@ -90,28 +102,42 @@ close SACCT;
 print "Start: $start\n";
 print "End: $end\n";
 
+######################################################################
 print "By memory request\n";
-printf "%12s %12s %15s %15s %15s\n","Request (GB)","Number","Usage (coreH)","Walltime(ave) (H)","Walltime(max) (H)";
-my $check = 0;
-my $usage = 0;
+printf "%12s %12s %8s %15s %8s %16s %8s %15s %15s\n","Request (GB)","Number","Cum %","Usage (coreH)","Cum %","Usage (nodeH)","Cum %","Elapsed(ave,H)","Elapsed(max,H)";
+my $cpuusage = 0;
+my $cumjobs = 0;
+my $cumusage = 0;
+my $cumelasped = 0;
+my $maxelapsed = 0;
 foreach $size (sort {&lbound($a) <=> &lbound($b)} keys %sizehist) {
-  printf "%12s %12d %15.2f %15.2f %15.2f\n",$size,$sizehist{$size},$cputime{'bymemreq'}{$size},$walltime{'bymemreq'}{$size}/$sizehist{$size},$walltime{'maxformemreq'}{$size};
-  $check += $sizehist{$size};
-  $usage += $cputime{'bymemreq'}{$size};
+  $cumjobs += $sizehist{$size};
+  $cumelapsed += $elapsed{'bymemreq'}{$size};
+  $cumusage += $usage{'bymemreq'}{$size};
+  $cpuusage += $cputime{'bymemreq'}{$size};
+  if ($elapsed{'maxformemreq'}{$size} > $maxelapsed) {$maxelapsed = $elapsed{'maxformemreq'}{$size};}
+  printf "%12s %12d %8.2f %15.2f %8.2f %16.2f %8.2f %15.2f %15.2f\n",$size,$sizehist{$size},100*$cumjobs/$totaljobs,$cputime{'bymemreq'}{$size},100*$cpuusage/$totalcputime,$usage{'bymemreq'}{$size},100*$cumusage/$totalusage,$elapsed{'bymemreq'}{$size}/$sizehist{$size},$elapsed{'maxformemreq'}{$size};
 }
-print "Total jobs = $check\n";
-print "Total usage = $usage\n";
+print "-" x 117; print "\n";
+printf "%12s %12d %8.2f %15.2f %8.2f %16.2f %8.2f %15.2f %15.2f\n","Totals",$totaljobs,100*$cumjobs/$totaljobs,$cpuusage,100*$cpuusage/$totalcputime,$cumusage,100*$cumusage/$totalusage,$cumelapsed/$cumjobs,$maxelapsed;
 
+######################################################################
 print "\n";
 print "By node request\n";
-printf "%12s %12s %15s %15s %15s\n","Nodes","Number","Usage (coreH)","Walltime(ave) (H)","Walltime(max) (H)";
-my $check = 0;
-my $usage = 0;
+printf "%12s %12s %8s %15s %8s %16s %8s %15s %15s\n","Nodes","Number","Cum %","Usage (coreH)","Cum %","Usage (nodeH)","Cum %","Elapsed(ave,H)","Elapsed(max,H)";
+my $cpuusage = 0;
+my $cumjobs = 0;
+my $cumusage = 0;
+my $cumelasped = 0;
+my $maxelapsed = 0;
 foreach $node (sort {&lbound($a) <=> &lbound($b)} keys %nodes) {
-  printf "%12s %12d %15.2f %15.2f %15.2f\n",$node,$nodes{$node},$cputime{'bynodes'}{$node},$walltime{'bynodereq'}{$node}/$nodes{$node},$walltime{'maxfornodereq'}{$node};
-  $check += $nodes{$node};
-  $usage += $cputime{'bynodes'}{$node};
+  $cumjobs += $nodes{$node};
+  $cumelapsed += $elapsed{'bynodereq'}{$node};
+  $cumusage += $usage{'bynodereq'}{$node};
+  $cpuusage += $cputime{'bynodereq'}{$node};
+  if ($elapsed{'maxfornodereq'}{$node} > $maxelapsed) {$maxelapsed = $elapsed{'maxfornodereq'}{$node};}
+  printf "%12s %12d %8.2f %15.2f %8.2f %16.2f %8.2f %15.2f %15.2f\n",$node,$nodes{$node},100*$cumjobs/$totaljobs,$cputime{'bynodereq'}{$node},100*$cpuusage/$totalcputime,$usage{'bynodereq'}{$node},100*$cumusage/$totalusage,$elapsed{'bynodereq'}{$node}/$nodes{$node},$elapsed{'maxfornodereq'}{$node};
 }
-print "Total jobs = $check\n";
-print "Total usage = $usage\n";
+print "-" x 117; print "\n";
+printf "%12s %12d %8.2f %15.2f %8.2f %16.2f %8.2f %15.2f %15.2f\n","Totals",$totaljobs,100*$cumjobs/$totaljobs,$cpuusage,100*$cpuusage/$totalcputime,$cumusage,100*$cumusage/$totalusage,$cumelapsed/$cumjobs,$maxelapsed;
 
