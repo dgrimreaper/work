@@ -1,10 +1,57 @@
 #!/usr/bin/perl
 
-use POSIX;
+#use POSIX;
+use Getopt::Long;
+use Pod::Usage;
+use Date::Format;
+use strict;
+use warnings;
 
-my %shares;
-my $start="2015-01-01T08:00:00";
-my $end="2015-12-31T23:59:59";
+my $startdate;
+my $enddate;
+my @date=localtime();
+my $year=strftime("%Y",@date);
+my $quarter=strftime("%q",@date);
+
+if ($quarter==1) {
+        $startdate = "$year-01-01T00:00:00";
+        $enddate = "$year-03-31T23:59:59";
+    } elsif ($quarter==2) {
+        $startdate = "$year-04-01T00:00:00";
+        $enddate = "$year-06-30T23:59:59";
+    } elsif ($quarter==3) {
+        $startdate = "$year-07-01T00:00:00";
+        $enddate = "$year-09-30T23:59:59";
+    } elsif ($quarter==4) {
+        $startdate = "$year-10-01T00:00:00";
+        $enddate = "$year-12-31T23:59:59";
+    } else { die "What kind of year has more than 4 quarters!" }
+
+my $help = 0;
+my @projects;
+my $userproject = $ENV{'IVEC_PROJECT'};
+my $cluster = $ENV{'IVEC_CLUSTER'};
+my @groups = split /\s+/,`groups`;
+my $mygroups = 0;
+
+GetOptions ("project=s" => \@projects,          # Project to gather data for
+    "cluster=s" => \$cluster,                   # Cluster to gather data for
+    "mygroups" => \$mygroups,                   # Whether to print information about all groups the user is in
+    "begin=s" => \$startdate,                   # Override start and end dates
+    "end=s" => \$enddate,
+    "help|?" => \$help,
+);
+
+pod2usage(1) if $help;
+
+if (defined $userproject and length $userproject and scalar @projects==0) { push @projects, $userproject};
+if ($mygroups) { @projects = @groups; }
+
+die "Project not set, see help to specify project.\n" unless (scalar @projects>0);
+die "Cluster not set, see help to specify cluster.\n" unless length $cluster;
+my $project = join(',',@projects);
+my $projectstr = '';
+if ($project ne 'all') {$projectstr = "-A $project";};
 
 sub toGB {
   my $num = $_[0];
@@ -18,7 +65,11 @@ sub toGB {
 sub toHours {
   #[DD-[hh:]]mm:ss
   /(?:(\d+)-)?(?:(\d+):)?(\d+):(\d+)/;
-  $answer=$1*24 + $2 + $3/60 + $4/3600;
+  my $days=$1 // 0;
+  my $hours=$2 // 0;
+  my $minutes=$3 // 0;
+  my $seconds=$4 // 0;
+  my $answer=$days*24 + $hours + $minutes/60 + $seconds/3600;
   return $answer;
 }
 
@@ -36,7 +87,7 @@ sub histogram {
     $histlow = "0";
     $histhigh = "0";
   } else {
-    my $tmp = floor(log($n) / log(2));
+    my $tmp = int(log($n) / log(2));
     $histlow = 2 ** ($tmp);
     $histhigh = 2 ** ($tmp+1);
   }
@@ -54,7 +105,7 @@ my $totaljobs = 0;
 my $totalcputime = 0;
 my $totalusage = 0;
 
-open(SACCT,"sacct -n -a -P -S $start -E $end --format=jobid,user,account,reqcpus,alloccpus,nnodes,reqmem,MaxRSS,MaxVMSize,State,CPUTimeRAW,NCPUS,Elapsed |");
+open(SACCT,"sacct -n -M $cluster -a $projectstr -P -S $startdate -E $enddate --format=jobid,user,account,reqcpus,alloccpus,nnodes,reqmem,MaxRSS,MaxVMSize,State,CPUTimeRAW,NCPUS,Elapsed |");
 while(<SACCT>){
     next if /^[0-9]*\.batch/; # remove .batch but leave in job array components.
     chomp;
@@ -71,16 +122,17 @@ while(<SACCT>){
     my $elapsedH = toHours($elapsed);
     my $memhist = histogram($size_req);
     my $nodehist = histogram($node);
-    if (not exists $sizehist{$memhist}) { $sizehist{$memhist} = 0; }
-    if (not exists $nodes{$nodehist}) { $nodes{$nodehist} = 0; }
-    if (not exists $cputime{'bynodereq'}{$nodehist}) { $cputime{'bynodereq'}{$nodehist} = 0; }
-    if (not exists $cputime{'bymemreq'}{$memhist}) { $cputime{'bymemreq'}{$memhist} = 0; }
-    if (not exists $elapsed{'bymemreq'}{$memhist}) { $elapsed{'bymemreq'}{$memhist} = 0; }
-    if (not exists $elapsed{'bynodereq'}{$memhist}) { $elapsed{'bynodereq'}{$memhist} = 0; }
-    if (not exists $elapsed{'maxformemreq'}{$memhist}) { $elapsed{'maxformemreq'}{$memhist} = 0; }
-    if (not exists $elapsed{'maxfornodereq'}{$nodehist}) { $elapsed{'maxfornodereq'}{$nodehist} = 0; }
-    if (not exists $usage{'bynodereq'}{$nodehist}) { $usage{'bynodereq'}{$nodehist} = 0; }
-    if (not exists $usage{'bymemreq'}{$memhist}) { $usage{'bymemreq'}{$memhist} = 0; }
+    $sizehist{$memhist} //= 0;
+    $nodes{$nodehist} //= 0;
+    $cputime{'bynodereq'}{$nodehist} //= 0;
+    $cputime{'bynodereq'}{$nodehist} //= 0;
+    $cputime{'bymemreq'}{$memhist} //= 0;
+    $elapsed{'bymemreq'}{$memhist} //= 0;
+    $elapsed{'bynodereq'}{$memhist} //= 0;
+    $elapsed{'maxformemreq'}{$memhist} //= 0;
+    $elapsed{'maxfornodereq'}{$nodehist} //= 0;
+    $usage{'bynodereq'}{$nodehist} //= 0;
+    $usage{'bymemreq'}{$memhist} //= 0;
     $totaljobs += 1;
     $sizehist{$memhist} += 1;
     $nodes{$nodehist} += 1;
@@ -99,18 +151,23 @@ while(<SACCT>){
 }
 close SACCT;
 
-print "Start: $start\n";
-print "End: $end\n";
+print "Start: $startdate\n";
+print "End: $enddate\n";
+print "Cluster: $cluster\n";
+print "Project(s): $project\n";
+
+$totaljobs || die "\nNo jobs in this period!!!\n\n";
 
 ######################################################################
-print "By memory request\n";
-printf "%12s %12s %8s %15s %8s %16s %8s %15s %15s\n","Request (GB)","Number","Cum %","Usage (coreH)","Cum %","Usage (nodeH)","Cum %","Elapsed(ave,H)","Elapsed(max,H)";
 my $cpuusage = 0;
 my $cumjobs = 0;
 my $cumusage = 0;
-my $cumelasped = 0;
+my $cumelapsed = 0;
 my $maxelapsed = 0;
-foreach $size (sort {&lbound($a) <=> &lbound($b)} keys %sizehist) {
+
+print "\nBy memory request\n";
+printf "%12s %12s %8s %15s %8s %16s %8s %15s %15s\n","Request (GB)","Number","Cum %","Usage (coreH)","Cum %","Usage (nodeH)","Cum %","Elapsed(ave,H)","Elapsed(max,H)";
+foreach my $size (sort {&lbound($a) <=> &lbound($b)} keys %sizehist) {
   $cumjobs += $sizehist{$size};
   $cumelapsed += $elapsed{'bymemreq'}{$size};
   $cumusage += $usage{'bymemreq'}{$size};
@@ -122,15 +179,15 @@ print "-" x 117; print "\n";
 printf "%12s %12d %8.2f %15.2f %8.2f %16.2f %8.2f %15.2f %15.2f\n","Totals",$totaljobs,100*$cumjobs/$totaljobs,$cpuusage,100*$cpuusage/$totalcputime,$cumusage,100*$cumusage/$totalusage,$cumelapsed/$cumjobs,$maxelapsed;
 
 ######################################################################
-print "\n";
-print "By node request\n";
+$cpuusage = 0;
+$cumjobs = 0;
+$cumusage = 0;
+$cumelapsed = 0;
+$maxelapsed = 0;
+
+print "\nBy node request\n";
 printf "%12s %12s %8s %15s %8s %16s %8s %15s %15s\n","Nodes","Number","Cum %","Usage (coreH)","Cum %","Usage (nodeH)","Cum %","Elapsed(ave,H)","Elapsed(max,H)";
-my $cpuusage = 0;
-my $cumjobs = 0;
-my $cumusage = 0;
-my $cumelasped = 0;
-my $maxelapsed = 0;
-foreach $node (sort {&lbound($a) <=> &lbound($b)} keys %nodes) {
+foreach my $node (sort {&lbound($a) <=> &lbound($b)} keys %nodes) {
   $cumjobs += $nodes{$node};
   $cumelapsed += $elapsed{'bynodereq'}{$node};
   $cumusage += $usage{'bynodereq'}{$node};
@@ -140,4 +197,70 @@ foreach $node (sort {&lbound($a) <=> &lbound($b)} keys %nodes) {
 }
 print "-" x 117; print "\n";
 printf "%12s %12d %8.2f %15.2f %8.2f %16.2f %8.2f %15.2f %15.2f\n","Totals",$totaljobs,100*$cumjobs/$totaljobs,$cpuusage,100*$cpuusage/$totalcputime,$cumusage,100*$cumusage/$totalusage,$cumelapsed/$cumjobs,$maxelapsed;
+
+exit;
+
+__END__
+
+=head1 NAME
+
+pawseyJobsBreakdown - Get Breakdown of Job Account Information From Pawsey Systems
+
+=head1 SYNOPSIS
+
+pawseyJobsBreakdown [options]
+
+ Options:
+   -project=id      specify project to query
+   -cluster=name    specify cluster to query
+   -mygroups        print information about all groups the user is in
+   -help            brief help message
+
+=head1 OPTIONS
+
+=over 8
+
+=item B<-project>
+
+Specify project ID that you wish to query the usage for. Defaults to IVEC_PROJECT environment variable.
+Can be specified multiple times to sum over multiple projects.
+
+=back
+
+=item B<-cluster>
+
+Specify cluster that you wish to query the usage for. Defaults to IVEC_CLUSTER environment variable.
+
+=back
+
+=item B<-mygroups>
+
+Print out information for all groups the user is a member of.  This overrides the -projects option.
+
+=back
+
+=item B<-begin=s>
+
+Set the start of the reporting period to the string "s".  Example format 2015-01-01T00:00:00.
+
+=back
+
+=item B<-end=s>
+
+Set the end of the reporting period to the string "s".  Example format 2015-12-31T23:59:59.
+
+=back
+
+=item B<-help>
+
+Print a brief help message and exits.
+
+=back
+
+
+=head1 DESCRIPTION
+
+B<pawseyJobsBreakdown> queries the Pawsey Supercomputing Centre systems for information about allocation statistics.
+
+=cut
 
