@@ -12,6 +12,7 @@ my $enddate;
 my @date=localtime();
 my $year=strftime("%Y",@date);
 my $quarter=strftime("%q",@date);
+my $user;
 
 if ($quarter==1) {
         $startdate = "$year-01-01T00:00:00";
@@ -39,6 +40,7 @@ GetOptions ("project=s" => \@projects,          # Project to gather data for
     "mygroups" => \$mygroups,                   # Whether to print information about all groups the user is in
     "begin=s" => \$startdate,                   # Override start and end dates
     "end=s" => \$enddate,
+    "user=s" => \$user,
     "help|?" => \$help,
 );
 
@@ -52,6 +54,8 @@ die "Cluster not set, see help to specify cluster.\n" unless length $cluster;
 my $project = join(',',@projects);
 my $projectstr = '';
 if ($project ne 'all') {$projectstr = "-A $project";};
+my $userstr = '-a';
+if (defined $user) {$userstr = "-u $user";};
 
 sub toGB {
   my $num = $_[0];
@@ -105,7 +109,7 @@ my $totaljobs = 0;
 my $totalcputime = 0;
 my $totalusage = 0;
 
-open(SACCT,"sacct -n -M $cluster -a $projectstr -P -S $startdate -E $enddate --format=jobid,user,account,reqcpus,alloccpus,nnodes,reqmem,MaxRSS,MaxVMSize,State,CPUTimeRAW,NCPUS,Elapsed |");
+open(SACCT,"sacct -n -M $cluster $userstr $projectstr -P -S $startdate -E $enddate --format=jobid,user,account,reqcpus,alloccpus,nnodes,reqmem,MaxRSS,MaxVMSize,State,CPUTimeRAW,NCPUS,Elapsed |");
 while(<SACCT>){
     next if /^[0-9]*\.batch/; # remove .batch but leave in job array components.
     chomp;
@@ -155,6 +159,11 @@ print "Start: $startdate\n";
 print "End: $enddate\n";
 print "Cluster: $cluster\n";
 print "Project(s): $project\n";
+if (defined $user) {
+  print "User: $user\n";
+} else {
+  print "User: all users\n";
+}
 
 $totaljobs || die "\nNo jobs in this period!!!\n\n";
 
@@ -214,6 +223,9 @@ pawseyJobsBreakdown [options]
    -project=id      specify project to query
    -cluster=name    specify cluster to query
    -mygroups        print information about all groups the user is in
+   -begin=date      start date of query
+   -end=date        end date of query
+   -user=name       restrict query to one user
    -help            brief help message
 
 =head1 OPTIONS
@@ -248,6 +260,12 @@ Set the start of the reporting period to the string "s".  Example format 2015-01
 =item B<-end=s>
 
 Set the end of the reporting period to the string "s".  Example format 2015-12-31T23:59:59.
+
+=back
+
+=item B<-user=s>
+
+Restrict the query to a single user.
 
 =back
 
