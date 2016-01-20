@@ -1,0 +1,246 @@
+#!/usr/bin/perl
+# Short tool to give an indication of amount of shares used this quarter
+# Version 0.1
+
+use Getopt::Long;
+use Pod::Usage;
+use Date::Format;
+use strict;
+use warnings;
+
+my $startdate = "2015-01-01T00:00:00";
+my $enddate = "2015-03-30T23:59:59";
+# It's either install the Fiscal PMs on all the login nodes for little gain or this:
+my @date=localtime();
+my $year=strftime("%Y",@date);
+my $quarter=strftime("%q",@date);
+
+if ($quarter==1) {
+        $startdate = "$year-01-01T00:00:00";
+        $enddate = "$year-03-31T23:59:59";
+    } elsif ($quarter==2) {
+        $startdate = "$year-04-01T00:00:00";
+        $enddate = "$year-06-30T23:59:59";
+    } elsif ($quarter==3) {
+        $startdate = "$year-07-01T00:00:00";
+        $enddate = "$year-09-30T23:59:59";
+    } elsif ($quarter==4) {
+        $startdate = "$year-10-01T00:00:00";
+        $enddate = "$year-12-31T23:59:59";
+    } else { die "What kind of year has more than 4 quarters!" }
+
+my %shares;
+my @projects;
+my $userproject = $ENV{'IVEC_PROJECT'};
+my $cluster = $ENV{'IVEC_CLUSTER'};
+my $storage = 0;
+my $raw = 0;
+my $users = 0;
+my $help = 0;
+my $project;
+my @groups = split /\s+/,`groups`;
+my $mygroups = 0;
+
+# No Number::bytes::Human on the Cray systems as standard. Going old school.
+sub get_filesize_str
+{
+    my $size = shift;
+
+    if ($size > 1099511627776) {   #   TiB: 1024 GiB
+        return sprintf("%.2f TiB", $size / 1099511627776);
+    } elsif ($size > 1073741824) { #   GiB: 1024 MiB
+        return sprintf("%.2f GiB", $size / 1073741824);
+    } elsif ($size > 1048576) {    #   MiB: 1024 KiB
+        return sprintf("%.2f MiB", $size / 1048576);
+    } elsif ($size > 1024) {       #   KiB: 1024 B
+        return sprintf("%.2f KiB", $size / 1024);
+    } else {                       #   bytes
+        return sprintf("%.2f bytes", $size);
+    }
+}
+
+GetOptions ("project=s" => \@projects,		# Project to gather data for
+    "cluster=s" => \$cluster,                   # Cluster to gather data for
+    "storage" => \$storage,			# Gather storage usage information
+    "mygroups" => \$mygroups,			# Whether to print information about all groups the user is in
+    "begin=s" => \$startdate,                   # Override start and end dates
+    "end=s" => \$enddate,
+    "raw" => \$raw,   				# Print raw output for input into scripts
+    "users" => \$users,   			# Print information for individual users
+    "help|?" => \$help,
+);
+
+pod2usage(1) if $help;
+
+#Set default to IVEC_PROJECT if none specified on command line.
+if (defined $userproject and length $userproject and scalar @projects==0) { push @projects, $userproject};
+if ($mygroups) { @projects = @groups; }
+
+die "Project not set, see help to specify project.\n" unless (scalar @projects>0);
+die "Cluster not set, see help to specify cluster.\n" unless length $cluster;
+
+foreach $project (@projects) {
+  $shares{$project}=0;
+}
+
+open(SHARES,"sshare -n -M $cluster |");
+while(<SHARES>){
+    next if /^root/;
+    next if /^  /;
+    chomp;
+    my @fields=split;
+    my $project = $fields[0];
+    my $allocation = $fields[1];
+    $shares{$project}=$allocation;
+}
+
+close SHARES;
+
+my $total=0;
+
+if ($raw != 1) {
+    print "Compute Information\n-------------------\n";
+    printf("%20s   %12s   %12s   %8s\n","Project ID","Allocation","Usage","% used");
+    printf("%20s   %12s   %12s   %8s\n","----------","----------","-----","------");
+}
+
+foreach $project (sort {$shares{$b} <=> $shares{$a}} keys %shares){
+    next if not grep (/$project/,@projects);
+    my $usage=0;
+    my %userusage;
+
+    open(SACCT,"sacct -n -a -M $cluster -A $project -S $startdate -E $enddate --format=jobid,user,CPUTimeRaw -X |");
+      while(<SACCT>) {
+      chomp;
+      next if /\.batch/;
+      my @fields=split;
+      my $jobid = $fields[0];
+      my $user = $fields[1];
+      my $rawusage = $fields[2]/3600;
+      if (exists $userusage{$user}) {
+        $userusage{$user} += $rawusage;
+      } else {
+        $userusage{$user} = $rawusage;
+      }
+      $usage+=$rawusage;
+    }
+    close SACCT;
+
+    if ($raw != 1) {
+      if ($shares{$project} == 0) {
+        printf("%20s   %12d   %12d   %8.1f\n",$project, $shares{$project}, $usage, 0.0);
+        if ($users == 1) {
+          foreach my $user (sort {$userusage{$b} <=> $userusage{$a}} keys %userusage) {
+            printf("%20s  %28d   %8.1f\n","--".$user, $userusage{$user}, 0.0);
+          }
+        }
+      } else {
+        printf("%20s   %12d   %12d   %8.1f\n",$project, $shares{$project}, $usage, 100.0*$usage/$shares{$project});
+        if ($users == 1) {
+          foreach my $user (sort {$userusage{$b} <=> $userusage{$a}} keys %userusage) {
+            printf("%20s  %28d   %8.1f\n","--".$user, $userusage{$user}, 100.0*$userusage{$user}/$shares{$project});
+          }
+        }
+      }
+
+    } else {
+      if ($shares{$project} == 0) {
+        printf("project=%s\nallocation=%d\nusage=%d\npercentage=%.1f\n",$project, $shares{$project}, $usage, 0.0);
+      } else {
+        printf("project=%s\nallocation=%d\nusage=%d\npercentage=%.1f\n",$project, $shares{$project}, $usage, 100.0*$usage/$shares{$project});
+      }
+    }
+
+
+}
+
+if ($storage == 1) {
+    my $uid_quota;
+    my $uid_used;
+    my $fs = "/group";
+    if ($raw != 1) {
+        print "\nStorage Information\n-------------------\n";
+    }
+    foreach $project (@projects){
+        my $group = `lfs quota -g $project $fs 2>/dev/null ` or (warn "You do not have permission to query the quota of that project\n" && next);
+        my $tmp = $group;
+        if ($tmp =~ /\ +$fs\ +([0-9\*]+)\ +([0-9\*]+)\ +([0-9\*]+)/) {
+            $uid_used = $1;
+            $uid_quota = $2;
+                    
+            $uid_used =~ s/\*//g;
+                    
+                    
+            $uid_quota = get_filesize_str($uid_quota * 1024);
+            $uid_used = get_filesize_str($uid_used * 1024);
+                        
+            if ($raw != 1) {
+                print "$fs usage for $project, used = $uid_used, quota = $uid_quota\n";
+            } else {
+                printf("storagefs=%s\nstorageused=%s\nstoragequota=%s\n", $fs, $uid_used, $uid_quota);
+            }
+        }
+    }
+
+}
+exit;
+
+__END__
+
+=head1 NAME
+
+pawseyAccountBalance - Get Account Information From Pawsey Systems
+
+=head1 SYNOPSIS
+
+pawseyAccountBalance [options] 
+
+ Options:
+   -project=id      specify project to query
+   -cluster=name    specify cluster to query
+   -storage         also give storage information
+   -mygroups        print information about all groups the user is in
+   -users           also give breakdown by user
+   -help            brief help message
+
+=head1 OPTIONS
+
+=over 8
+
+=item B<-project>
+
+Specify project ID that you wish to query the usage for. Defaults to IVEC_PROJECT environment variable.
+
+=back
+
+=item B<-cluster>
+
+Specify cluster that you wish to query the usage for. Defaults to IVEC_CLUSTER environment variable.
+
+=back
+
+=item B<-storage>
+
+Also print out storage information for the project. Currently only including /group storage. Only root user can query usage for projects which they are not a member of.
+
+=item B<-mygroups>
+
+Print out information for all groups the user is a member of.  This overrides the -projects option.
+
+=item B<-users>
+
+For usage, print out the breakdown by individual user.
+
+=back
+
+=item B<-help>
+
+Print a brief help message and exits.
+
+=back
+
+=head1 DESCRIPTION
+
+B<pawseyAccountBalance> queries the Pawsey Supercomputing Centre systems for information about usage.
+
+=cut
