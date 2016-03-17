@@ -1,6 +1,5 @@
 #!/usr/bin/perl
 # Short tool to give an indication of amount of shares used this quarter
-# Version 0.1
 
 use Getopt::Long;
 use Pod::Usage;
@@ -63,10 +62,10 @@ GetOptions ("project=s" => \@projects,		# Project to gather data for
     "cluster=s" => \$cluster,                   # Cluster to gather data for
     "storage" => \$storage,			# Gather storage usage information
     "mygroups" => \$mygroups,			# Whether to print information about all groups the user is in
-    "begin=s" => \$startdate,                   # Override start and end dates
-    "end=s" => \$enddate,
     "raw" => \$raw,   				# Print raw output for input into scripts
     "users" => \$users,   			# Print information for individual users
+    "begin=s" => \$startdate,                   # Override start and end dates
+    "end=s" => \$enddate,
     "help|?" => \$help,
 );
 
@@ -79,6 +78,7 @@ if ($mygroups) { @projects = @groups; }
 die "Project not set, see help to specify project.\n" unless (scalar @projects>0);
 die "Cluster not set, see help to specify cluster.\n" unless length $cluster;
 
+# To report on projects not in current sshare.
 foreach $project (@projects) {
   $shares{$project}=0;
 }
@@ -99,6 +99,12 @@ close SHARES;
 my $total=0;
 
 if ($raw != 1) {
+    my $project = join(",",@projects);
+    print "Start: $startdate\n";
+    print "End: $enddate\n";
+    print "Cluster: $cluster\n";
+    print "Project(s): $project\n\n";
+
     print "Compute Information\n-------------------\n";
     printf("%20s   %12s   %12s   %8s\n","Project ID","Allocation","Usage","% used");
     printf("%20s   %12s   %12s   %8s\n","----------","----------","-----","------");
@@ -128,17 +134,17 @@ foreach $project (sort {$shares{$b} <=> $shares{$a}} keys %shares){
 
     if ($raw != 1) {
       if ($shares{$project} == 0) {
-        printf("%20s   %12d   %12d   %8.1f\n",$project, $shares{$project}, $usage, 0.0);
+        printf("%20s   %12d   %12d   %8s\n",$project, $shares{$project}, $usage, "-");
         if ($users == 1) {
           foreach my $user (sort {$userusage{$b} <=> $userusage{$a}} keys %userusage) {
-            printf("%20s  %28d   %8.1f\n","--".$user, $userusage{$user}, 0.0);
+            printf("%20s  %28d   %8s\n","--".$user, $userusage{$user}, "-");
           }
         }
       } else {
-        printf("%20s   %12d   %12d   %8.1f\n",$project, $shares{$project}, $usage, 100.0*$usage/$shares{$project});
+        printf("%20s   %12d   %12d   %8.2f\n",$project, $shares{$project}, $usage, 100.0*$usage/$shares{$project});
         if ($users == 1) {
           foreach my $user (sort {$userusage{$b} <=> $userusage{$a}} keys %userusage) {
-            printf("%20s  %28d   %8.1f\n","--".$user, $userusage{$user}, 100.0*$userusage{$user}/$shares{$project});
+            printf("%20s  %28d   %8.2f\n","--".$user, $userusage{$user}, 100.0*$userusage{$user}/$shares{$project});
           }
         }
       }
