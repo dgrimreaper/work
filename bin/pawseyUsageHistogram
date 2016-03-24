@@ -1,0 +1,259 @@
+#!/usr/bin/perl
+
+#use POSIX;
+use Getopt::Long;
+use Pod::Usage;
+use Date::Format;
+use strict;
+use warnings;
+
+my $startdate;
+my $enddate;
+my @date=localtime();
+my $year=strftime("%Y",@date);
+my $quarter=strftime("%q",@date);
+
+if ($quarter==1) {
+        $startdate = "$year-01-01T00:00:00";
+        $enddate = "$year-03-31T23:59:59";
+    } elsif ($quarter==2) {
+        $startdate = "$year-04-01T00:00:00";
+        $enddate = "$year-06-30T23:59:59";
+    } elsif ($quarter==3) {
+        $startdate = "$year-07-01T00:00:00";
+        $enddate = "$year-09-30T23:59:59";
+    } elsif ($quarter==4) {
+        $startdate = "$year-10-01T00:00:00";
+        $enddate = "$year-12-31T23:59:59";
+    } else { die "What kind of year has more than 4 quarters!" }
+
+my $help = 0;
+my @projects;
+my $userproject = $ENV{'IVEC_PROJECT'};
+my $cluster = $ENV{'IVEC_CLUSTER'};
+my @groups = split /\s+/,`groups`;
+my $mygroups = 0;
+my $partition;
+my $feature;
+my $reportbycores = 0;
+my $maxnodes = 1480;
+my $maxcores = 35520;
+
+GetOptions ("project=s" => \@projects,          # Project to gather data for
+    "cluster=s" => \$cluster,                   # Cluster to gather data for
+    "mygroups" => \$mygroups,                   # Whether to print information about all groups the user is in
+    "begin=s" => \$startdate,                   # Override start and end dates
+    "end=s" => \$enddate,
+    "cores=s" => \$reportbycores,
+    "partition=s" => \$partition,
+    "feature=s" => \$feature,
+    "help|?" => \$help,
+);
+
+pod2usage(1) if $help;
+
+if (defined $userproject and length $userproject and scalar @projects==0) { push @projects, $userproject};
+if ($mygroups) { @projects = @groups; }
+
+die "Project not set, see help to specify project.\n" unless (scalar @projects>0);
+die "Cluster not set, see help to specify cluster.\n" unless length $cluster;
+#my $projectstr = '';
+#if ($project ne 'all') {$projectstr = "-A $project";};
+my $partitionstr = '';
+if (defined $partition) {$partitionstr = "-r $partition";};
+
+sub toGB {
+  my $num = $_[0];
+  my $amount = 0;
+  if ($num =~ s/[Gg].*//) { $amount = $num };
+  if ($num =~ s/[Mm].*//) { $amount = $num/1000 };
+  if ($num =~ s/[Kk].*//) { $amount = $num/1000000 };
+  return $amount;
+}
+
+sub toHours {
+  #[DD-[hh:]]mm:ss
+  /(?:(\d+)-)?(?:(\d+):)?(\d+):(\d+)/;
+  my $days=$1 // 0;
+  my $hours=$2 // 0;
+  my $minutes=$3 // 0;
+  my $seconds=$4 // 0;
+  my $answer=$days*24 + $hours + $minutes/60 + $seconds/3600;
+  return $answer;
+}
+
+sub lbound {
+  #[128-256) - returns 128
+  $_[0] =~ /(\d+)-\d+/;
+  return $1;
+}
+
+sub histogram {
+  my $n = shift;
+  my $histlow = "0";
+  my $histhigh = "0";
+  if ($n<1) {
+    $histlow = "0";
+    $histhigh = "0";
+  } else {
+    my $tmp = int(log($n) / log(2));
+    $histlow = 2 ** ($tmp);
+    $histhigh = 2 ** ($tmp+1);
+  }
+  return "[$histlow\-$histhigh)";
+}
+
+my %nodes;
+my %cores;
+my %usage;
+my $totaljobs = 0;
+my $sep = '';
+my %cputime;
+
+print "Start: $startdate\n";
+print "End: $enddate\n";
+print "Cluster: $cluster\n";
+my $project = join(',',@projects);
+print "Project(s): $project\n";
+if (defined $partition) {
+  print "Partition: $partition\n";
+} else {
+  print "Partition: all partitions\n";
+}
+
+######################################################################
+#Table header
+print "\n";
+printf "%32s","Project";
+my $max = $maxnodes;
+if ($reportbycores) {$max = $maxcores};
+for (my $i=0; 2**$i<=$max; $i++) {
+    my $nodehist = histogram(2**$i);
+    $nodes{$nodehist} //= 0;
+    printf ", %12s",$nodehist;
+}
+
+######################################################################
+# 
+foreach my $project (@projects) {
+  #Reset variables
+  $totaljobs = 0;
+  undef %nodes;
+  undef %cores;
+  undef %cputime;
+
+  for (my $i=0; 2**$i<=$max; $i++) {
+    my $nodehist = histogram(2**$i);
+    my $corehist = histogram(2**$i);
+    $nodes{$nodehist} //= 0;
+    $cores{$corehist} //= 0;
+    $cputime{$nodehist} //= 0;
+  }
+
+  open(SACCT,"sacct -n -M $cluster -a $partitionstr -A $project -P -S $startdate -E $enddate --format=jobid,user,account,reqcpus,alloccpus,nnodes,State,NCPUS,CPUTimeRAW -X |");
+  while(<SACCT>){
+    next if /^[0-9]*\.batch/; # remove .batch but leave in job array components.
+    chomp;
+    my @fields=split /\|/;
+    my $jobid     = $fields[0];
+    my $node      = $fields[5];
+    my $state     = $fields[6];
+    my $cputimeraw   = $fields[8];
+    next if $state =~ /PENDING/;
+#    my $ncpus   = $fields[7];
+    my $ncpus = $node * 24;
+    my $nodehist = histogram($node);
+    $nodes{$nodehist} //= 0;
+    $nodes{$nodehist} += 1;
+    my $corehist = histogram($ncpus);
+    $cores{$corehist} //= 0;
+    $cores{$corehist} += 1;
+    $totaljobs += 1;
+    $cputime{$nodehist} //= 0;
+    $cputime{$nodehist} += $cputimeraw/3600;
+  }
+  close SACCT;
+
+  if ($totaljobs==0) {$totaljobs=1};
+
+  ######################################################################
+  my $cumtime = 0;
+
+  print "\n";
+  printf "%32s",$project;
+    foreach my $node (sort {&lbound($a) <=> &lbound($b)} keys %nodes) {
+      $cumtime += $cputime{$node};
+      #printf ", %12.1f",100*$nodes{$node}/$totaljobs;
+      printf ", %12.1f",$cputime{$node};
+    }
+}
+print "\n";
+
+exit;
+
+__END__
+
+=head1 NAME
+
+pawseyJobsBreakdown - Get Breakdown of Job Account Information From Pawsey Systems
+
+=head1 SYNOPSIS
+
+pawseyJobsBreakdown [options]
+
+ Options:
+   -project=id      specify project to query
+   -cluster=name    specify cluster to query
+   -mygroups        print information about all groups the user is in
+   -begin=date      start date of query
+   -end=date        end date of query
+   -help            brief help message
+
+=head1 OPTIONS
+
+=over 8
+
+=item B<-project>
+
+Specify project ID that you wish to query the usage for. Defaults to IVEC_PROJECT environment variable.
+Can be specified multiple times to sum over multiple projects.
+
+=back
+
+=item B<-cluster>
+
+Specify cluster that you wish to query the usage for. Defaults to IVEC_CLUSTER environment variable.
+
+=back
+
+=item B<-mygroups>
+
+Print out information for all groups the user is a member of.  This overrides the -projects option.
+
+=back
+
+=item B<-begin=s>
+
+Set the start of the reporting period to the string "s".  Example format 2015-01-01T00:00:00.
+
+=back
+
+=item B<-end=s>
+
+Set the end of the reporting period to the string "s".  Example format 2015-12-31T23:59:59.
+
+=back
+
+=item B<-help>
+
+Print a brief help message and exits.
+
+=back
+
+
+=head1 DESCRIPTION
+
+B<pawseyJobsBreakdown> queries the Pawsey Supercomputing Centre systems for information about allocation statistics.
+
+=cut
+
