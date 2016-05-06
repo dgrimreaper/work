@@ -115,7 +115,7 @@ foreach $project (sort {$shares{$b} <=> $shares{$a}} keys %shares){
     my $usage=0;
     my %userusage;
 
-    open(SACCT,"sacct -n -a -M $cluster -A $project -S $startdate -E $enddate --format=jobid,user,CPUTimeRaw -X |");
+    open(SACCT,"sacct -T -n -a -M $cluster -A $project -S $startdate -E $enddate --format=jobid,user,CPUTimeRaw -X |");
       while(<SACCT>) {
       chomp;
       next if /\.batch/;
