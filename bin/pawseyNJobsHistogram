@@ -147,7 +147,7 @@ foreach my $project (@projects) {
     $cores{$corehist} //= 0;
   }
 
-  open(SACCT,"sacct -n -M $cluster -a $partitionstr -A $project -P -S $startdate -E $enddate --format=jobid,user,account,reqcpus,alloccpus,nnodes,State,NCPUS |");
+  open(SACCT,"sacct -n -M $cluster -a $partitionstr -A $project -P -S $startdate -E $enddate -T -X --format=jobid,user,account,reqcpus,alloccpus,nnodes,State,NCPUS |");
   while(<SACCT>){
     next if /^[0-9]*\.batch/; # remove .batch but leave in job array components.
     chomp;
