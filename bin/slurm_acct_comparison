@@ -1,0 +1,44 @@
+#!/usr/bin/perl
+
+my %shares;
+my %rawusage;
+my $start="2016-04-01T00:00:00";
+my $end="2016-06-30T23:59:59";
+
+open(SHARES,"sshare -n -l |");
+while(<SHARES>){
+# Account|User|Raw Shares|Norm Shares|Raw Usage|Norm Usage|Effectv Usage|FairShare|GrpCPUMins|CPURunMins|
+    next if /^root/;
+    next if /^  /;
+    chomp;
+    my @fields=split;
+    my $project = $fields[0];
+    $shares{$project}=$fields[1];
+    $rawusage{$project}=$fields[3];
+}
+
+close SHARES;
+
+my $total=0;
+
+printf("%20s   %12s   %12s   %8s   %12s   %12s\n","          ","      ","sacct","%% used","sreport","sshare");
+printf("%20s   %12s   %12s   %8s   %12s   %12s\n","Project ID","Shares","Usage","%% used","Usage  ","Usage ");
+printf("%20s   %12s   %12s   %8s   %12s   %12s\n","----------","------","-----","-------","-------","------");
+foreach $project (sort {$shares{$b} <=> $shares{$a}} keys %shares){
+    my $usage=`sacct -n -X -T -a -A $project -S $start -E $end --format=jobid,CPUTimeRaw | grep -v batch | awk '{sum+=\$2}END{print sum/3600}'`;
+
+
+    my $sreportusage=`sreport cluster AccountUtilizationByUser Account=$project Start=$start End=$end -t Hours | grep $project | head -n 1 | awk '{print \$3}'`;
+
+    $total+=$usage;
+    if ($shares{$project}==0) {
+      printf("%20s   %12d   %12d   %8.1f    %12d    %12d\n",$project, $shares{$project}, $usage, 0, $sreportusage, $rawusage{$project}/3600);
+    } else {
+      printf("%20s   %12d   %12d   %8.1f    %12d    %12d\n",$project, $shares{$project}, $usage, 100.0*$usage/$shares{$project}, $sreportusage, $rawusage{$project}/3600);
+    }
+}
+
+print "\nTotal system usage in period was $total CPU Hours\n";
+
+exit;
+
