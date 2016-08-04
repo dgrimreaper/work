@@ -40,6 +40,10 @@ my $project;
 my @groups = split /\s+/,`groups`;
 my $mygroups = 0;
 
+#Truncate date to avoid future usage.
+my $currentdate=strftime("%Y-%m-%dT%H:%M:%S",@date);
+if ($currentdate lt $enddate) { $enddate = $currentdate };
+
 # No Number::bytes::Human on the Cray systems as standard. Going old school.
 sub get_filesize_str
 {
