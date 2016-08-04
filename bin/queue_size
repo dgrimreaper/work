@@ -3,10 +3,11 @@
 my $totaltime=0;
 my $totaljobs=0;
 my $nnodes;
+my $cluster = $ENV{'PAWSEY_CLUSTER'};
 
-$nnodes = `sinfo -o '%D' | tail -n +2`;
+$nnodes = `sinfo -M $cluster -o '%D' | tail -n +3`;
 
-foreach $line (`squeue -o "%12D %.12L"` ) {
+foreach $line (`squeue -M $cluster -o "%12D %.12L"` ) {
     chomp( $line );
     $lineno++;
 
@@ -38,6 +39,6 @@ foreach $line (`squeue -o "%12D %.12L"` ) {
 print `date`;
 printf("Total time (node hours)  : %8.1f\n",$totaltime/3600);
 printf("Total time (node days)   : %8.1f\n",$totaltime/(24*3600));
-printf("Total time (Magnus days) : %8.1f\n",$totaltime/($nnodes*24*3600));
+printf("Total time ($cluster days) : %8.1f\n",$totaltime/($nnodes*24*3600));
 printf("Total jobs : %d\n",$totaljobs);
 
