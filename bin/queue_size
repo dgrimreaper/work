@@ -2,6 +2,10 @@
 
 my $totaltime=0;
 my $totaljobs=0;
+my $nnodes;
+
+$nnodes = `sinfo -o '%D' | tail -n +2`;
+
 foreach $line (`squeue -o "%12D %.12L"` ) {
     chomp( $line );
     $lineno++;
@@ -34,6 +38,6 @@ foreach $line (`squeue -o "%12D %.12L"` ) {
 print `date`;
 printf("Total time (node hours)  : %8.1f\n",$totaltime/3600);
 printf("Total time (node days)   : %8.1f\n",$totaltime/(24*3600));
-printf("Total time (Magnus days) : %8.1f\n",$totaltime/(1480*24*3600));
+printf("Total time (Magnus days) : %8.1f\n",$totaltime/($nnodes*24*3600));
 printf("Total jobs : %d\n",$totaljobs);
 
