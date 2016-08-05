@@ -1,15 +1,44 @@
 #!/usr/bin/perl
 
 use Date::Format;
+use strict;
+use warnings;
 
 my %shares;
 my %usage;
-my $start="2015-07-01T00:00:00";
+my $start="2016-01-01T00:00:00";
 my $end="2018-09-30T23:59:59";
 my %data;
 my %priorities;
+my $cluster = $ENV{'PAWSEY_CLUSTER'};
 
-open(SHARES,"sshare -n |");
+my @date=localtime();
+my $year=strftime("%Y",@date);
+my $quarter=strftime("%q",@date);
+
+if ($quarter==1) {
+        $start = "$year-01-01T00:00:00";
+        $end = "$year-03-31T23:59:59";
+    } elsif ($quarter==2) {
+        $start = "$year-04-01T00:00:00";
+        $end = "$year-06-30T23:59:59";
+    } elsif ($quarter==3) {
+        $start = "$year-07-01T00:00:00";
+        $end = "$year-09-30T23:59:59";
+    } elsif ($quarter==4) {
+        $start = "$year-10-01T00:00:00";
+        $end = "$year-12-31T23:59:59";
+    } else { die "What kind of year has more than 4 quarters!" }
+
+#Truncate date to avoid future usage.
+my $currentdate=strftime("%Y-%m-%dT%H:%M:%S",@date);
+if ($currentdate lt $end) { $end = $currentdate };
+
+print "Start: $start\n";
+print "End: $end\n";
+print "Cluster: $cluster\n";
+
+open(SHARES,"sshare -n -M $cluster |");
 while(<SHARES>){
     next if /^root/;
     next if /^  /;
@@ -29,7 +58,7 @@ while(<SHARES>){
 }
 close SHARES;
 
-open(PRIORITIES,'sprio -h -o "%.10i %.10Y %.10A %.10F %.10J %.10P %.10Q" |');
+open(PRIORITIES,"sprio -M $cluster -h -o \"%.10i %.10Y %.10A %.10F %.10J %.10P %.10Q\" |");
 # JOBID PRIORITY AGE FAIRSHARE JOBSIZE PARTITION QOS
 while(<PRIORITIES>){
     chomp;
@@ -51,10 +80,26 @@ while(<PRIORITIES>){
 }
 close PRIORITIES;
 
+#Read the queue into memory, to avoid race condition.  Occasionally the queue might not be consistent with the sprio output above, but very unlikely.
+open(QUEUE,"squeue -o \"%8i %8u %15a %.14j %.3t %.12l %.5D %.10r %.10Q\" | tail -n +2 | ");
+chomp(my @lines = <QUEUE>);
+close QUEUE;
+
+my %runningprojects;
+#Get a unique list of projects running.
+foreach my $line (@lines) {
+    my @fields = split(/\s+/,$line);
+    my $project = $fields[2];
+    if (exists $runningprojects{$project}) {
+    } else {
+      $runningprojects{$project}=1;
+    }
+}
+
 #This is more accurate than sshare, but very slow.
 #Need to do this because sshare data now broken.
-foreach $project (keys %data) {
-    $usage=`sacct -n -a -A $project -S $start -E $end --format=jobid,CPUTimeRaw | grep -v batch | awk '{sum+=\$2}END{print sum/3600}'`;
+foreach my $project (keys %runningprojects) {
+    my $usage=`sacct -n -a -T -X -A $project -M $cluster -S $start -E $end --format=jobid,CPUTimeRaw | grep -v batch | awk '{sum+=\$2}END{print sum/3600}'`;
     $data{$project}{'usage'}=$usage;
     if ($data{$project}{'share'}==0) {
       $data{$project}{'usagefraction'}=0
@@ -63,38 +108,37 @@ foreach $project (keys %data) {
     }
 }
 
+
 #JOBID USER ACCOUNT NAME ST TIMELIMIT NODES REASON
 #PRIORITY SUBMITTIME USAGE SHARE
 my $lineno = -1;
 my $format = "%10s %8s %15s %14s %6s %12s %5s %8s %12s %10s %12s %8s %8s %6s %9s %8s %9s %6s\n";
-foreach $line (`squeue -o "%8i %8u %15a %.14j %.3t %.12l %.5D %.10r %.10Q"` ) {
-    chomp( $line );
+foreach my $line (@lines) {
     $lineno++;
 
     if ($lineno%30 == 0) {
-      $jobid = 'JOBID';
-      $user = 'USER';
-      $project = 'ACCOUNT';
-      $name = 'NAME';
-      $status = 'STATUS';
-      $timelimit = 'TIMELIMIT';
-      $nodes = 'NODES';
+      my $jobid = 'JOBID';
+      my $user = 'USER';
+      my $project = 'ACCOUNT';
+      my $name = 'NAME';
+      my $status = 'STATUS';
+      my $timelimit = 'TIMELIMIT';
+      my $nodes = 'NODES';
 #      $usage='USAGE';
 #      $usagefraction='%USAGE';
-      $share='SHARE';
-      $susage='USAGE';
-      $reason='REASON';
-      $priority = 'PRIORITY';
-      $submittime = 'SUBMITTIME';
-      $eligibletime = 'ELIGIBLETIME';
-      $sfraction='%USAGE';
-      $age = 'AGE';
-      $fairshare = 'FAIRSHARE';
-      $jobsize = 'JOBSIZE';
-      $partition = 'PARTITION';
-      $qos = 'QOS';
+      my $share='SHARE';
+      my $susage='USAGE';
+      my $reason='REASON';
+      my $priority = 'PRIORITY';
+      my $submittime = 'SUBMITTIME';
+      my $eligibletime = 'ELIGIBLETIME';
+      my $sfraction='%USAGE';
+      my $age = 'AGE';
+      my $fairshare = 'FAIRSHARE';
+      my $jobsize = 'JOBSIZE';
+      my $partition = 'PARTITION';
+      my $qos = 'QOS';
       printf($format,$jobid,$user,$project,$name,$status,$timelimit,$nodes,$share,$susage,$reason,$eligibletime,$sfraction,$priority,$age,$fairshare,$jobsize,$partition,$qos);
-      #printf($format,$jobid,$user,$project,$name,$status,$timelimit,$nodes,$share,$susage,$reason,$submittime,$sfraction,$priority,$age,$fairshare,$jobsize,$partition,$qos);
     }
 
     my @fields = split(/\s+/,$line);
@@ -115,10 +159,17 @@ foreach $line (`squeue -o "%8i %8u %15a %.14j %.3t %.12l %.5D %.10r %.10Q"` ) {
     my $priority = $fields[8];
     my $project = $fields[2];
 
-    foreach $line2 (`scontrol show job $jobid`) {
+    my $eligibletime;
+    my $age;
+    my $fairshare;
+    my $jobsize;
+    my $partition;
+    my $qos;
+
+    foreach my $line2 (`scontrol show job $jobid`) {
       chomp($line2);
       if ($line2 =~ /SubmitTime=/) {
-        $submittime = $line2;
+        my $submittime = $line2;
         $submittime =~ s/.*SubmitTime=(.*?)\s+EligibleTime=(.*?)$/$1/;
         $eligibletime = $line2;
         $eligibletime =~ s/.*SubmitTime=(.*?)\s+EligibleTime=(.*?)$/$2/;
@@ -141,11 +192,11 @@ foreach $line (`squeue -o "%8i %8u %15a %.14j %.3t %.12l %.5D %.10r %.10Q"` ) {
       $partition='';
       $qos='';
     }
-    $share=$data{$project}{'share'};
-    $susage=sprintf("%8.0f",$data{$project}{'susage'});
-    $sfraction=sprintf("%6.1f",$data{$project}{'sfraction'});
-    $susage=sprintf("%8.0f",$data{$project}{'usage'});
-    $sfraction=sprintf("%9.1f",$data{$project}{'usagefraction'});
+    my $share=$data{$project}{'share'};
+    #$susage=sprintf("%8.0f",$data{$project}{'susage'});
+    #$sfraction=sprintf("%6.1f",$data{$project}{'sfraction'});
+    my $susage=sprintf("%8.0f",$data{$project}{'usage'});
+    my $sfraction=sprintf("%9.1f",$data{$project}{'usagefraction'});
     printf($format,$jobid,$user,$project,$name,$status,$timelimit,$nodes,$share,$susage,$reason,$eligibletime,$sfraction,$priority,$age,$fairshare,$jobsize,$partition,$qos);
     #printf($format,$jobid,$user,$project,$name,$status,$timelimit,$nodes,$share,$susage,$reason,$submittime,$sfraction,$priority,$age,$fairshare,$jobsize,$partition,$qos);
 }
