@@ -1,6 +1,7 @@
 #!/usr/bin/perl
 # Short tool to give an indication of amount of shares used this quarter
 
+
 use Getopt::Long;
 use Pod::Usage;
 use Date::Format;
@@ -39,10 +40,6 @@ my $help = 0;
 my $project;
 my @groups = split /\s+/,`groups`;
 my $mygroups = 0;
-
-#Truncate date to avoid future usage.
-my $currentdate=strftime("%Y-%m-%dT%H:%M:%S",@date);
-if ($currentdate lt $enddate) { $enddate = $currentdate };
 
 # No Number::bytes::Human on the Cray systems as standard. Going old school.
 sub get_filesize_str
@@ -114,16 +111,20 @@ if ($raw != 1) {
     printf("%20s   %12s   %12s   %8s\n","----------","----------","-----","------");
 }
 
+#Truncate date to avoid future usage.
+my $currentdate=strftime("%Y-%m-%dT%H:%M:%S",@date);
+if ($currentdate lt $enddate) { $enddate = $currentdate };
+
 foreach $project (sort {$shares{$b} <=> $shares{$a}} keys %shares){
     next if not grep (/$project/,@projects);
     my $usage=0;
     my %userusage;
 
-    open(SACCT,"sacct -T -n -a -M $cluster -A $project -S $startdate -E $enddate --format=jobid%30,user%30,CPUTimeRaw%30 -X |");
+    open(SACCT,"sacct -n -a -M $cluster -A $project -S $startdate -E $enddate -p --format=jobid,user,CPUTimeRaw -X -T |");
       while(<SACCT>) {
       chomp;
       next if /\.batch/;
-      my @fields=split;
+      my @fields=split /\|/, $_;
       my $jobid = $fields[0];
       my $user = $fields[1];
       my $rawusage = $fields[2]/3600;
@@ -211,6 +212,8 @@ pawseyAccountBalance [options]
    -storage         also give storage information
    -mygroups        print information about all groups the user is in
    -users           also give breakdown by user
+   -begin           start date of the query
+   -end             end date of the query
    -help            brief help message
 
 =head1 OPTIONS
@@ -240,6 +243,14 @@ Print out information for all groups the user is a member of.  This overrides th
 =item B<-users>
 
 For usage, print out the breakdown by individual user.
+
+=item B<-begin>
+
+For usage, sets the start date of the query.  The default is the beginning of the current quarter.
+
+=item B<-end>
+
+For usage, sets the end date of the query.  The default is the end of the current quarter.
 
 =back
 
