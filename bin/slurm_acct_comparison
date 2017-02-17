@@ -3,7 +3,9 @@
 my %shares;
 my %rawusage;
 my $start="2016-04-01T00:00:00";
-my $end="2016-06-30T23:59:59";
+#my $end="2016-06-30T23:59:59";
+my $end=`date +%Y-%m-%dT%H:%M:%S`;
+chomp($end);
 
 open(SHARES,"sshare -n -l |");
 while(<SHARES>){
