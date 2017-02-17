@@ -38,9 +38,10 @@ print "Start: $start\n";
 print "End: $end\n";
 print "Cluster: $cluster\n";
 
-open(SHARES,"sshare -n -M $cluster |");
+open(SHARES,"sshare -h -n -M $cluster |");
 while(<SHARES>){
     next if /^root/;
+    next if /^CLUSTER:/;
     next if /^  /;
     chomp;
     my @fields=split;
@@ -99,7 +100,17 @@ foreach my $line (@lines) {
 #This is more accurate than sshare, but very slow.
 #Need to do this because sshare data now broken.
 foreach my $project (keys %runningprojects) {
-    my $usage=`sacct -n -a -T -X -A $project -M $cluster -S $start -E $end --format=jobid,CPUTimeRaw | grep -v batch | awk '{sum+=\$2}END{print sum/3600}'`;
+    #my $usage=`sacct -n -a -T -X -A $project -M $cluster -S $start -E $end --format=jobid%20,CPUTimeRaw%20 | grep -v batch | awk '{sum+=\$2}END{print sum/3600}'`;
+    my $usage=0;
+    open(SACCT,"sacct -n -a -M $cluster -A $project -S $start -E $end -p --format=jobid%20,CPUTimeRaw%20 -X -T |");
+      while(<SACCT>) {
+      chomp;
+      next if /\.batch/;
+      my @fields=split /\|/, $_;
+      my $rawusage = $fields[1]/3600;
+      $usage+=$rawusage;
+    }
+    close SACCT;
     $data{$project}{'usage'}=$usage;
     if ($data{$project}{'share'}==0) {
       $data{$project}{'usagefraction'}=0
