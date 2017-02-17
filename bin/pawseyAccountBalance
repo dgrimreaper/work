@@ -90,9 +90,9 @@ while(<SHARES>){
     next if /^CLUSTER:/;
     next if /^  /;
     chomp;
-    #my @fields=split;
     my @fields=split /\|/, $_;
     my $project = $fields[0];
+    $project =~ s/^\s+//;
     my $allocation = $fields[2];
     $shares{$project}=$allocation;
 }
