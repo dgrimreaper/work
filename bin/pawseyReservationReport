@@ -1,0 +1,254 @@
+#!/usr/bin/perl
+# Short tool to give an indication of utilisation of reservations
+
+use Getopt::Long;
+use Pod::Usage;
+use Date::Format;
+use strict;
+use warnings;
+
+my $startdate = "2015-01-01T00:00:00";
+my $enddate = "2015-03-30T23:59:59";
+# It's either install the Fiscal PMs on all the login nodes for little gain or this:
+my @date=localtime();
+my $year=strftime("%Y",@date);
+my $quarter=strftime("%q",@date);
+
+if ($quarter==1) {
+        $startdate = "$year-01-01T00:00:00";
+        $enddate = "$year-03-31T23:59:59";
+    } elsif ($quarter==2) {
+        $startdate = "$year-04-01T00:00:00";
+        $enddate = "$year-06-30T23:59:59";
+    } elsif ($quarter==3) {
+        $startdate = "$year-07-01T00:00:00";
+        $enddate = "$year-09-30T23:59:59";
+    } elsif ($quarter==4) {
+        $startdate = "$year-10-01T00:00:00";
+        $enddate = "$year-12-31T23:59:59";
+    } else { die "What kind of year has more than 4 quarters!" }
+
+my $cluster = $ENV{'PAWSEY_CLUSTER'};
+my $help = 0;
+my %reservations;
+my %associd;
+
+sub ncpus
+{
+    my $hostname = shift;
+    my $ncpus;
+    open(NODE,"scontrol show node $hostname|");
+    while (<NODE>) {
+      next if ! /CPUTot=/;
+      if ($_ =~ "CPUAlloc=(.*) CPUErr=(.*) CPUTot=(.*) CPULoad=(.*)") { $ncpus=$3; }
+    }
+    close(NODE);
+    chomp($ncpus);
+    return $ncpus;
+}
+
+sub hosts
+{
+  my $hosts = shift;
+  my @hostlist;
+  open(HOSTS,"scontrol show hostname $hosts|");
+    while (<HOSTS>) {
+      my $host = $_;
+      chomp($host);
+      push @hostlist, $host;
+      #if (length($host)>1) {push @hostlist, $host};
+    }
+  close(HOSTS);
+  return @hostlist;
+}
+
+sub walltime
+{
+  my $intime = shift;
+  chomp($intime);
+  my $days=0;
+  my $hours=0;
+  my $mins=0;
+  my $secs=0;
+	if ($intime =~ "^([0-9]+)-([0-9]+):([0-9]+):([0-9]+)\$") {
+		$days=$1;
+		$hours=$2;
+		$mins=$3;
+		$secs=$4;
+        } elsif ($intime =~ "^([0-9]+)-([0-9]+):([0-9]+)\$") {
+		$days=$1;
+		$hours=$2;
+		$mins=$3;
+        } elsif ($intime =~ "^([0-9]+)-([0-9]+)\$") {
+		$days=$1;
+		$hours=$2;
+        } elsif ($intime =~ "^([0-9]+):([0-9]+):([0-9]+)\$") {
+		$hours=$1;
+		$mins=$2;
+		$secs=$3;
+        } elsif ($intime =~ "^([0-9]+):([0-9]+)\$") {
+		$mins=$1;
+		$secs=$2;
+        } elsif ($intime =~ "^([0-9]+)\$") {
+		$mins=$1;
+        }
+
+  my $totalhours = $days * 24 + $hours + $mins / 60 + $secs / 3600;
+  return $totalhours;
+
+}
+
+GetOptions (
+    "cluster=s" => \$cluster,                   # Cluster to gather data for
+    "begin=s" => \$startdate,                   # Override start and end dates
+    "end=s" => \$enddate,
+    "help|?" => \$help,
+);
+
+pod2usage(1) if $help;
+
+die "Cluster not set, see help to specify cluster.\n" unless length $cluster;
+
+my $total=0;
+
+print "Start: $startdate\n";
+print "End: $enddate\n";
+print "Cluster: $cluster\n";
+
+#Truncate date to avoid future usage.
+my $currentdate=strftime("%Y-%m-%dT%H:%M:%S",@date);
+if ($currentdate lt $enddate) { $enddate = $currentdate };
+
+#Get associations
+open(SCONTROL,"scontrol show assoc|");
+while(<SCONTROL>) {
+  chomp;
+  next if ! /ClusterName=$cluster/;
+  my $line = $_;
+  $_ =~ "^ClusterName=(.*) Account=(.*) UserName=(.*) Partition=(.*) ID=(.*)\$";
+  my $account = $2;
+  my $id = $5;
+  $associd{$id} = $account;
+}
+close(SCONTROL);
+
+#Get reservations info from sreport
+open(SREPORT,"sreport -n -p -M \"$cluster\" reservation Utilization start=$startdate end=$enddate -t hours Format=Name,ReservationID,Associations,TotalTime,Nodes,Allocated,Start,End|");
+  while(<SREPORT>) {
+    my @fields=split /\|/, $_;
+    my $reservationname = $fields[0];
+    my $reservationid = $fields[1];
+    my $reservationassociations = $fields[2];
+    my $reservationtime = $fields[3];
+    my $reservationnodes = $fields[4];
+    my $allocated = $fields[5];
+    my $start = $fields[6];
+    my $end = $fields[7];
+    $reservations{$reservationid}{"name"} = $reservationname;
+    $reservations{$reservationid}{"time"} = $reservationtime;
+    $reservations{$reservationid}{"hours"} = &walltime($reservationtime);
+    $reservations{$reservationid}{"usage"} = 0;
+    $reservations{$reservationid}{"associations"} = $reservationassociations;
+    $reservations{$reservationid}{"ncpus"} = 0;
+    $reservations{$reservationid}{"start"} = $start;
+    $reservations{$reservationid}{"end"} = $end;
+    foreach (&hosts($reservationnodes)) {
+      my $host = $_;
+      my $ncpus = &ncpus($host);
+      $reservations{$reservationid}{"ncpus"} += $ncpus;
+    }
+  }
+close(SREPORT);
+
+# Get job info over the period that ran in reservations
+open(SACCT,"sacct -n -a -M \"$cluster\" -S $startdate -E $enddate -p --format=jobid,user,CPUTimeRaw,AssocID,ReservationID -X -T |");
+  while(<SACCT>) {
+  chomp;
+  next if /\.batch/;
+  my @fields=split /\|/, $_;
+  my $jobid = $fields[0];
+  my $user = $fields[1];
+  my $rawusage = $fields[2]/3600;
+  my $reservationid= $fields[4];
+  if (defined $reservationid) {
+    $reservations{$reservationid}{"usage"} += $rawusage;
+  }
+}
+close SACCT;
+
+print "Reservation Information\n-------------------\n";
+printf("%20s %14s %14s %10s %8s %12s %12s %12s %6s %16s\n","Reservation","Start","End","WallTime","NCPUs","Usage",      "Idle",        "Total",        "% used","Project");
+printf("%20s %14s %14s %10s %8s %12s %12s %12s %6s %16s\n","Name",       "",     "",   "(hours)", "",    "(core hours)","(core hours)","(core hours)","",      "");
+printf("%20s %14s %14s %10s %8s %12s %12s %12s %6s %16s\n","-----------","-----","---","--------","-----","-----------","------------","------------","------","-------");
+#printf("%20s %14s %14s %10s %8s %12s %12s %12s %6s %16s %12s\n","Reservation","Start","End","WallTime","NCPUs","Usage",      "Idle",        "Total",        "% used","Project","Associations");
+#printf("%20s %14s %14s %10s %8s %12s %12s %12s %6s %16s %12s\n","Name",       "",     "",   "(hours)", "",    "(core hours)","(core hours)","(core hours)","",      "",       "");
+#printf("%20s %14s %14s %10s %8s %12s %12s %12s %6s %16s %12s\n","-----------","-----","---","--------","-----","-----------","------------","------------","------","-------","------------");
+
+#Print out Reservations
+foreach my $reservationid (keys %reservations){
+  my $start=  $reservations{$reservationid}{"start"};
+  my $end=  $reservations{$reservationid}{"end"};
+  my $name=  $reservations{$reservationid}{"name"};
+  my $time=  $reservations{$reservationid}{"time"};
+  my $hours=  $reservations{$reservationid}{"hours"};
+  my $ncpus=  $reservations{$reservationid}{"ncpus"};
+  my $usage=  $reservations{$reservationid}{"usage"};
+  my $assoc=  $reservations{$reservationid}{"associations"};
+  my $corehours = $hours * $ncpus;
+  my $project = $associd{$assoc};
+  if (! defined $project) {$project = ""};
+  my $ratio = 0;
+  if ($usage >0) {$ratio = 100.0 * $usage / $corehours};
+  #printf("%20s %14s %14s %10.1f %8d %12.1f %12.1f %12.1f %6.1f %16s %12s\n",$name,$start,$end,$hours,$ncpus,$usage,$corehours-$usage,$corehours,$ratio,$project,$assoc);
+  printf("%20s %14s %14s %10.1f %8d %12.1f %12.1f %12.1f %6.1f %16s\n",$name,$start,$end,$hours,$ncpus,$usage,$corehours-$usage,$corehours,$ratio,$project);
+}
+
+exit;
+
+__END__
+
+=head1 NAME
+
+pawseyAccountBalance - Get Account Information From Pawsey Systems
+
+=head1 SYNOPSIS
+
+pawseyAccountBalance [options] 
+
+ Options:
+   -cluster=name    specify cluster to query
+   -begin           start date of the query
+   -end             end date of the query
+   -help            brief help message
+
+=head1 OPTIONS
+
+=over 8
+
+=item B<-cluster>
+
+Specify cluster that you wish to query the usage for. Defaults to IVEC_CLUSTER environment variable.
+
+=back
+
+=item B<-begin>
+
+For usage, sets the start date of the query.  The default is the beginning of the current quarter.
+
+=item B<-end>
+
+For usage, sets the end date of the query.  The default is the end of the current quarter.
+
+=back
+
+=item B<-help>
+
+Print a brief help message and exits.
+
+=back
+
+=head1 DESCRIPTION
+
+B<pawseyAccountBalance> queries the Pawsey Supercomputing Centre systems for information about usage.
+
+=cut
