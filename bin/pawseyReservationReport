@@ -36,7 +36,7 @@ my %associd;
 sub ncpus
 {
     my $hostname = shift;
-    my $ncpus;
+    my $ncpus = 0;
     open(NODE,"scontrol show node $hostname|");
     while (<NODE>) {
       next if ! /CPUTot=/;
@@ -120,7 +120,7 @@ my $currentdate=strftime("%Y-%m-%dT%H:%M:%S",@date);
 if ($currentdate lt $enddate) { $enddate = $currentdate };
 
 #Get associations
-open(SCONTROL,"scontrol show assoc|");
+open(SCONTROL,"scontrol -M \"$cluster\" show assoc|");
 while(<SCONTROL>) {
   chomp;
   next if ! /ClusterName=$cluster/;
