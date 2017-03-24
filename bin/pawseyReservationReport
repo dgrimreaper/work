@@ -4,6 +4,7 @@
 use Getopt::Long;
 use Pod::Usage;
 use Date::Format;
+use Date::Parse qw(str2time);
 use strict;
 use warnings;
 
@@ -98,6 +99,23 @@ sub walltime
 
 }
 
+sub unixtime {
+  use Time::Piece;
+  use Time::Seconds;
+  my $date = shift;
+  my $unixtime;
+  if ($date =~ "Ystday") {
+    my @now=localtime();
+    my $yesterday = @now - ONE_DAY;
+    my $st=strftime("%Y-%m-%d",@date);
+    $date =~ s/Ystday/$st/;
+    $unixtime = str2time($date);
+  } else {
+    $unixtime = str2time($date);
+  }
+  return ($unixtime);
+}
+
 GetOptions (
     "cluster=s" => \$cluster,                   # Cluster to gather data for
     "begin=s" => \$startdate,                   # Override start and end dates
@@ -185,7 +203,8 @@ printf("%20s %14s %14s %10s %8s %12s %12s %12s %6s %16s\n","-----------","-----"
 #printf("%20s %14s %14s %10s %8s %12s %12s %12s %6s %16s %12s\n","-----------","-----","---","--------","-----","-----------","------------","------------","------","-------","------------");
 
 #Print out Reservations
-foreach my $reservationid (keys %reservations){
+foreach my $reservationid (sort {&unixtime($reservations{$a}{"start"}) <=> &unixtime($reservations{$b}{"start"})} keys %reservations){
+
   my $start=  $reservations{$reservationid}{"start"};
   my $end=  $reservations{$reservationid}{"end"};
   my $name=  $reservations{$reservationid}{"name"};
