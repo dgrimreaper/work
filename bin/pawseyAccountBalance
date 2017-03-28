@@ -1,7 +1,6 @@
 #!/usr/bin/perl
 # Short tool to give an indication of amount of shares used this quarter
 
-
 use Getopt::Long;
 use Pod::Usage;
 use Date::Format;
