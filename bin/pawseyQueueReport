@@ -80,25 +80,46 @@ open(SACCT,"sacct -n -a -M \"$cluster\" -r \"$queue\" -S $startdate -E $enddate 
 }
 close SACCT;
 
-print "Usage by user\n-------------------\n";
+print "\nUsage by user, sorted by number of jobs\n-------------------\n";
 printf("%30s %14s %14s\n","User","Core Hours","Number of jobs");
 printf("%30s %14s %14s\n","----","----------","--------------");
-
 foreach my $user (sort {$userjobs{$b} <=> $userjobs{$a}} keys %userusage){
   my $usage = $userusage{$user};
   my $njobs = $userjobs{$user};
   printf("%30s %14.1f %14d\n",$user,$usage,$njobs);
 }
-
-print "Usage by project\n-------------------\n";
-printf("%30s %14s %14s\n","Project","Core Hours","Number of jobs");
 printf("%30s %14s %14s\n","-------","----------","--------------");
 
+print "\nUsage by user, sorted by core hours\n-------------------\n";
+printf("%30s %14s %14s\n","User","Core Hours","Number of jobs");
+printf("%30s %14s %14s\n","----","----------","--------------");
+foreach my $user (sort {$userusage{$b} <=> $userusage{$a}} keys %userusage){
+  my $usage = $userusage{$user};
+  my $njobs = $userjobs{$user};
+  printf("%30s %14.1f %14d\n",$user,$usage,$njobs);
+}
+printf("%30s %14s %14s\n","-------","----------","--------------");
+
+print "\nUsage by project, sorted by number of jobs\n-------------------\n";
+printf("%30s %14s %14s\n","Project","Core Hours","Number of jobs");
+printf("%30s %14s %14s\n","-------","----------","--------------");
 foreach my $project (sort {$projectjobs{$b} <=> $projectjobs{$a}} keys %projectusage){
   my $usage = $projectusage{$project};
   my $njobs = $projectjobs{$project};
   printf("%30s %14.1f %14d\n",$project,$usage,$njobs);
 }
+printf("%30s %14s %14s\n","-------","----------","--------------");
+
+print "\nUsage by project, sorted by core hours\n-------------------\n";
+printf("%30s %14s %14s\n","Project","Core Hours","Number of jobs");
+printf("%30s %14s %14s\n","-------","----------","--------------");
+foreach my $project (sort {$projectusage{$b} <=> $projectusage{$a}} keys %projectusage){
+  my $usage = $projectusage{$project};
+  my $njobs = $projectjobs{$project};
+  printf("%30s %14.1f %14d\n",$project,$usage,$njobs);
+}
+printf("%30s %14s %14s\n","-------","----------","--------------");
+
 exit;
 
 __END__
