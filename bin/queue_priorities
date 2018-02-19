@@ -17,7 +17,7 @@ my $year=strftime("%Y",@date);
 my $quarter=strftime("%q",@date);
 
 if ($quarter==1) {
-        $start = "$year-01-01T00:00:00";
+        $start = "$year-01-15T00:00:00";
         $end = "$year-03-31T23:59:59";
     } elsif ($quarter==2) {
         $start = "$year-04-01T00:00:00";
@@ -97,17 +97,20 @@ foreach my $line (@lines) {
     }
 }
 
+my $HTfactor = 1;
+if ($cluster =~ /magnus/i) {$HTfactor = 2}
+if ($cluster =~ /galaxy/i) {$HTfactor = 2}
+
 #This is more accurate than sshare, but very slow.
 #Need to do this because sshare data now broken.
 foreach my $project (keys %runningprojects) {
-    #my $usage=`sacct -n -a -T -X -A $project -M $cluster -S $start -E $end --format=jobid%20,CPUTimeRaw%20 | grep -v batch | awk '{sum+=\$2}END{print sum/3600}'`;
     my $usage=0;
-    open(SACCT,"sacct -n -a -M $cluster -A $project -S $start -E $end -p --format=jobid%20,CPUTimeRaw%20 -X -T |");
+    open(SACCT,"sacct -n -a -M $cluster -A $project -S $start -E $end -p -X -T --format=jobid%20,CPUTimeRaw%20 |");
       while(<SACCT>) {
       chomp;
       next if /\.batch/;
       my @fields=split /\|/, $_;
-      my $rawusage = $fields[1]/3600;
+      my $rawusage = $fields[1]/(3600*$HTfactor);
       $usage+=$rawusage;
     }
     close SACCT;

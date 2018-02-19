@@ -15,7 +15,7 @@ my $year=strftime("%Y",@date);
 my $quarter=strftime("%q",@date);
 
 if ($quarter==1) {
-        $startdate = "$year-01-01T00:00:00";
+        $startdate = "$year-01-15T00:00:00";
         $enddate = "$year-03-31T23:59:59";
     } elsif ($quarter==2) {
         $startdate = "$year-04-01T00:00:00";
@@ -71,7 +71,7 @@ GetOptions ("project=s" => \@projects,		# Project to gather data for
 
 pod2usage(1) if $help;
 
-#Set default to IVEC_PROJECT if none specified on command line.
+#Set default to PAWSEY_PROJECT if none specified on command line.
 if (defined $userproject and length $userproject and scalar @projects==0) { push @projects, $userproject};
 if ($mygroups) { @projects = @groups; }
 
@@ -100,6 +100,10 @@ close SHARES;
 
 my $total=0;
 
+#Truncate date to avoid future usage.
+my $currentdate=strftime("%Y-%m-%dT%H:%M:%S",@date);
+if ($currentdate lt $enddate) { $enddate = $currentdate };
+
 if ($raw != 1) {
     my $project = join(",",@projects);
     print "Start: $startdate\n";
@@ -112,23 +116,23 @@ if ($raw != 1) {
     printf("%20s   %12s   %12s   %8s\n","----------","----------","-----","------");
 }
 
-#Truncate date to avoid future usage.
-my $currentdate=strftime("%Y-%m-%dT%H:%M:%S",@date);
-if ($currentdate lt $enddate) { $enddate = $currentdate };
+my $HTfactor = 1;
+if ($cluster =~ /magnus/i) {$HTfactor = 2}
+if ($cluster =~ /galaxy/i) {$HTfactor = 2}
 
 foreach $project (sort {$shares{$b} <=> $shares{$a}} keys %shares){
     next if not grep (/$project/,@projects);
     my $usage=0;
     my %userusage;
 
-    open(SACCT,"sacct -n -a -M \"$cluster\" -A \"$project\" -S $startdate -E $enddate -p --format=jobid,user,CPUTimeRaw -X -T |");
+    open(SACCT,"sacct -n -a -M \"$cluster\" -A \"$project\" -S $startdate -E $enddate -p -X -T --format=jobid,user,CPUTimeRaw |");
       while(<SACCT>) {
       chomp;
       next if /\.batch/;
       my @fields=split /\|/, $_;
       my $jobid = $fields[0];
       my $user = $fields[1];
-      my $rawusage = $fields[2]/3600;
+      my $rawusage = $fields[2]/(3600*$HTfactor);
       if (exists $userusage{$user}) {
         $userusage{$user} += $rawusage;
       } else {
@@ -223,13 +227,13 @@ pawseyAccountBalance [options]
 
 =item B<-project>
 
-Specify project ID that you wish to query the usage for. Defaults to IVEC_PROJECT environment variable.
+Specify project ID that you wish to query the usage for. Defaults to PAWSEY_PROJECT environment variable.
 
 =back
 
 =item B<-cluster>
 
-Specify cluster that you wish to query the usage for. Defaults to IVEC_CLUSTER environment variable.
+Specify cluster that you wish to query the usage for. Defaults to PAWSEY_CLUSTER environment variable.
 
 =back
 
