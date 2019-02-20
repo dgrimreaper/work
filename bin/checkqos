@@ -7,75 +7,134 @@ use Date::Format;
 use strict;
 use warnings;
 my %users;
+my $help=0;
 my $inqos = 0;
 my $nusers = 0;
 my $naccounts = 0;
 my %partitionusers;
 my %partitionaccounts;
 my $partition;
+my $clusterqos;
+my $cluster = $ENV{'PAWSEY_CLUSTER'};
+my %accountqos;
 
-open(ASSOC,"scontrol show assoc |");
+GetOptions (
+    "cluster=s" => \$cluster,                   # Cluster to gather data for
+    "help|?" => \$help,
+);
+
+pod2usage(1) if $help;
+
+open(ASSOC,"sacctmgr show assoc where cluster=$cluster format=cluster,account,user,partition,share,qos |");
 while(<ASSOC>){
-    next if /^Current/;
-    next if /^User Records/;
-    next if /Account Limits/;
-    next if /User Limits/;
-    chomp;
+    next if /^   Cluster/;
+    next if /^---/;
+#    chomp;
     my $line = $_;
-    if ($line =~ /ClusterName=(.+?) Account=(.+?) UserName=(.+?)\((\d+)\) Partition=(.+?) ID=(.+?)/) {
-      my $account=$2;
-      my $user=$3;
-      my $partition=$5;
-      $partitionusers{$partition}{$user}=1;
-      $partitionaccounts{$partition}{$account}=1;
-    }
-    if ($line =~ /UserName=(.+)\((\d+)\)/) {
-      my $user = $1;
-      my $usernum = $2;
-      $users{$usernum}=$user;
-    }
-    if ($line =~ /QOS=(.+)\((\d+)\)/) {
-      my $qos = $1;
-#      my $qosnum = $2;
-      if (! $inqos) {
-        print "\nSLURM Association Summary:\n";
-        foreach $partition (keys %partitionusers) {
-          my $n = keys %{ $partitionusers{$partition} };
-          print "Users in $partition is $n\n";
-        }
-        foreach $partition (keys %partitionaccounts) {
-          my $n = keys %{ $partitionaccounts{$partition} };
-          print "Accounts in $partition is $n\n";
-        }
-        print "\nExplicit QOS Entries:\n";
+    # Root.  4 fields
+    if ($line =~ /^\s+(\S+)\s+root\s+(\S+)\s+(\S+)\s?$/) {
+      $clusterqos = $3;
+        printf("Cluster:    %20s\n\n",$clusterqos);
+    } elsif
+    # User.  6 fields
+    ($line =~ /^\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s?$/) {
+      my $thisqos=$6;
+      my $thisaccount=$2;
+      my $thisuser=$3;
+      my $thispartition=$3;
+      #if ($thisqos ne $clusterqos) {
+      if ($thisqos ne $accountqos{$thisaccount}) {
+        printf("User:       %20s   %20s   %20s   %20s\n",$thisaccount,$thisuser,$thispartition,$thisqos);
       }
-      if ($inqos) {
-        print "  number of accounts = $naccounts\n";
-        print "  number of users = $nusers\n";
-        $naccounts=0;
-        $nusers=0;
+    } elsif
+    # Account.  4 fields
+    ($line =~ /^\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s?$/) {
+      my $thisqos=$4;
+      my $thisaccount=$2;
+      if ($thisqos ne $clusterqos) {
+        printf("Account:    %20s   %20s\n",$thisaccount,$thisqos);
       }
-      $inqos=1;
-      print "QOS $qos\n";
+      $accountqos{$thisaccount}=$thisqos;
     }
-    if ($inqos==1) {
-      if ($line =~ /Account (.+)/) {
-        print "  Account $1\n";
-        $naccounts++;
-      }
-      if ($line =~ /User (.+)/) {
-        my $user = $users{$1};
-        print "  User $user\n";
-        $nusers++;
-      }
-    }
+
+
+#reaper@magnus-2:~/work/bin> sacctmgr show assoc where cluster=magnus format=cluster,account,user,partition,share,qos |head
+#   Cluster    Account       User  Partition     Share                  QOS
+#---------- ---------- ---------- ---------- --------- --------------------
+#    magnus       root                               1       longqos,normal
+#    magnus       root      slurm                    1       longqos,normal
+#    magnus      askap                               0               normal
+#    magnus        bq2                         3875000       longqos,normal
+#    magnus        bq2   ahaghiri     debugq    parent       longqos,normal
+#    magnus        bq2   ahaghiri      workq    parent       longqos,normal
+#    magnus        bq2   bechlars     debugq    parent       longqos,normal
+#    magnus        bq2   bechlars      workq    parent       longqos,normal
+
+
 }
-      if ($inqos) {
-        print "  number of accounts = $naccounts\n";
-        print "  number of users = $nusers\n";
-        $naccounts=0;
-        $nusers=0;
-      }
+
+#open(ASSOC,"scontrol show assoc |");
+#while(<ASSOC>){
+#    next if /^Current/;
+#    next if /^User Records/;
+#    next if /Account Limits/;
+#    next if /User Limits/;
+#    chomp;
+#    my $line = $_;
+#    if ($line =~ /ClusterName=(.+?) Account=(.+?) UserName=(.+?)\((\d+)\) Partition=(.+?) ID=(.+?)/) {
+#      my $account=$2;
+#      my $user=$3;
+#      my $partition=$5;
+#      $partitionusers{$partition}{$user}=1;
+#      $partitionaccounts{$partition}{$account}=1;
+#    }
+#    if ($line =~ /UserName=(.+)\((\d+)\)/) {
+#      my $user = $1;
+#      my $usernum = $2;
+#      $users{$usernum}=$user;
+#    }
+#    if ($line =~ /QOS=(.+)\((\d+)\)/) {
+#      my $qos = $1;
+##      my $qosnum = $2;
+#      if (! $inqos) {
+#        print "\nSLURM Association Summary:\n";
+#        foreach $partition (keys %partitionusers) {
+#          my $n = keys %{ $partitionusers{$partition} };
+#          print "Users in $partition is $n\n";
+#        }
+#        foreach $partition (keys %partitionaccounts) {
+#          my $n = keys %{ $partitionaccounts{$partition} };
+#          print "Accounts in $partition is $n\n";
+#        }
+#        print "\nExplicit QOS Entries:\n";
+#      }
+#      if ($inqos) {
+#        print "  number of accounts = $naccounts\n";
+#        print "  number of users = $nusers\n";
+#        $naccounts=0;
+#        $nusers=0;
+#      }
+#      $inqos=1;
+#      print "QOS $qos\n";
+#    }
+#    if ($inqos==1) {
+#      if ($line =~ /Account (.+)/) {
+#        print "  Account $1\n";
+#        $naccounts++;
+#      }
+#      if ($line =~ /User (.+)/) {
+#        my $user = $users{$1};
+#        print "  User $user\n";
+#        $nusers++;
+#      }
+#    }
+#}
+#      if ($inqos) {
+#        print "  number of accounts = $naccounts\n";
+#        print "  number of users = $nusers\n";
+#        $naccounts=0;
+#        $nusers=0;
+#      }
 
 #reaper@magnus-2:~> sacctmgr show qos format="name%-20,priority"
 #                Name   Priority
@@ -94,4 +153,31 @@ while(<ASSOC>){
 #PriorityWeightQOS=10000
 
 #sacctmgr show assoc format="name%-20,Account%-20,ID,Qos,User"
+
+exit;
+
+__END__
+
+=head1 NAME
+
+checkqos - See what is not the default QOS
+
+=head1 SYNOPSIS
+
+pawseyAccountBalance [options]
+
+ Options:
+   -cluster=name    specify cluster to query
+   -mygroups        print information about all groups the user is in
+
+=head1 OPTIONS
+
+=over 8
+
+=item B<-cluster>
+
+Specify cluster that you wish to query the usage for. Defaults to PAWSEY_CLUSTER environment variable.
+
+=back
+
 
