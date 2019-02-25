@@ -1,0 +1,221 @@
+#!/usr/bin/perl
+# Short tool to give an indication of utilisation of partitions
+
+use Getopt::Long;
+use Pod::Usage;
+use Date::Format;
+use Date::Parse qw(str2time);
+use strict;
+use warnings;
+
+my $startdate = "2015-01-01T00:00:00";
+my $enddate = "2015-03-30T23:59:59";
+# It's either install the Fiscal PMs on all the login nodes for little gain or this:
+my @date=localtime();
+my $year=strftime("%Y",@date);
+my $quarter=strftime("%q",@date);
+my $queue="debugq";
+
+sub startofquarter {
+  my $quarter = shift;
+  my $year = shift;
+
+  if ($quarter==1) {
+    return "$year-01-07T00:00:00";
+  } elsif ($quarter==2) {
+    return "$year-04-01T00:00:00";
+  } elsif ($quarter==3) {
+    return "$year-07-01T00:00:00";
+  } elsif ($quarter==4) {
+    return "$year-10-01T00:00:00";
+  } else
+  { die "What kind of year has more than 4 quarters?!" }
+}
+
+sub endofquarter {
+  my $quarter = shift;
+  my $year = shift;
+  my $enddate;
+
+  if ($quarter==1) {
+    $enddate = "$year-03-31T23:59:59";
+  } elsif ($quarter==2) {
+    $enddate = "$year-06-30T23:59:59";
+  } elsif ($quarter==3) {
+    $enddate = "$year-09-30T23:59:59";
+  } elsif ($quarter==4) {
+    $enddate = "$year-12-31T23:59:59";
+  } else
+  { die "What kind of year has more than 4 quarters?!" }
+  #Truncate date to avoid future usage.
+  my $currentdate=strftime("%Y-%m-%dT%H:%M:%S",@date);
+  if ($currentdate lt $enddate) { $enddate = $currentdate };
+  return $enddate
+}
+
+$startdate = startofquarter($quarter,$year);
+$enddate = endofquarter($quarter,$year);
+
+my $cluster = $ENV{'PAWSEY_CLUSTER'};
+my $help = 0;
+
+GetOptions (
+    "cluster=s" => \$cluster,                   # Cluster to gather data for
+    "begin=s" => \$startdate,                   # Override start and end dates
+    "end=s" => \$enddate,
+    "queue=s" => \$queue,
+    "help|?" => \$help,
+);
+
+pod2usage(1) if $help;
+
+die "Cluster not set, see help to specify cluster.\n" unless length $cluster;
+
+my $total=0;
+
+print "Start: $startdate\n";
+print "End: $enddate\n";
+print "Cluster: $cluster\n";
+print "Queue: $queue\n";
+
+#Truncate date to avoid future usage.
+my $currentdate=strftime("%Y-%m-%dT%H:%M:%S",@date);
+if ($currentdate lt $enddate) { $enddate = $currentdate };
+
+my $HTfactor = 1;
+if ($cluster =~ /magnus/i) {$HTfactor = 2}
+if ($cluster =~ /galaxy/i) {$HTfactor = 2}
+
+my %userusage;
+my %projectusage;
+my %userjobs;
+my %projectjobs;
+my %queueuserusage;
+my %queueprojectusage;
+my %queueuserjobs;
+my %queueprojectjobs;
+
+# Get job info over the period that ran in this queue
+open(SACCT,"sacct -n -a -M \"$cluster\" -S $startdate -E $enddate -p --format=jobid,user,CPUTimeRaw,Account,Partition -X -T |");
+  while(<SACCT>) {
+  chomp;
+  my @fields=split /\|/, $_;
+  my $jobid = $fields[0];
+  my $user = $fields[1];
+  my $rawusage = $fields[2]/(3600*$HTfactor);
+  my $project = $fields[3];
+  my $partition = $fields[4];
+  next if $jobid =~ /\.batch/;
+
+  $userusage{$user} += $rawusage;
+  $projectusage{$project} += $rawusage;
+  $userjobs{$user}++;
+  $projectjobs{$project}++;
+  if (lc $partition eq lc $queue) {
+    $queueuserusage{$user} += $rawusage;
+    $queueprojectusage{$project} += $rawusage;
+    $queueuserjobs{$user}++;
+    $queueprojectjobs{$project}++;
+  }
+}
+close SACCT;
+
+print "\nDebugq usage by user, sorted by number of jobs\n-------------------\n";
+printf("%20s %14s %14s %16s %14s %14s %14s\n","User","Debugq Core Hours","Debugq Jobs","Total Core Hours","Total Jobs","% Core Hours","% Total Jobs");
+printf("%20s %14s %14s %16s %14s %14s %14s\n","----","-----------------","-----------","----------------","----------","------------","------------");
+foreach my $user (sort {$queueuserjobs{$b} <=> $queueuserjobs{$a}} keys %queueuserusage){
+  my $qusage = $queueuserusage{$user};
+  my $qnjobs = $queueuserjobs{$user};
+  my $usage = $userusage{$user};
+  my $njobs = $userjobs{$user};
+  printf("%20s %14.1f %14d %16.1f %14d %14.2f %14.2f\n",$user,$qusage,$qnjobs,$usage,$njobs,100*$qusage/$usage,100*$qnjobs/$njobs);
+}
+
+print "\nDebugq usage by user, sorted by core hours\n-------------------\n";
+printf("%20s %14s %14s %16s %14s %14s %14s\n","User","Debugq Core Hours","Debugq Jobs","Total Core Hours","Total Jobs","% Core Hours","% Total Jobs");
+printf("%20s %14s %14s %16s %14s %14s %14s\n","----","-----------------","-----------","----------------","----------","------------","------------");
+foreach my $user (sort {$queueuserusage{$b} <=> $queueuserusage{$a}} keys %queueuserusage){
+  my $qusage = $queueuserusage{$user};
+  my $qnjobs = $queueuserjobs{$user};
+  my $usage = $userusage{$user};
+  my $njobs = $userjobs{$user};
+  printf("%20s %14.1f %14d %16.1f %14d %14.2f %14.2f\n",$user,$qusage,$qnjobs,$usage,$njobs,100*$qusage/$usage,100*$qnjobs/$njobs);
+}
+
+print "\nDebugq usage by project, sorted by number of jobs\n-------------------\n";
+printf("%20s %14s %14s %16s %14s %14s %14s\n","Project","Debugq Core Hours","Debugq Jobs","Total Core Hours","Total Jobs","% Core Hours","% Total Jobs");
+printf("%20s %14s %14s %16s %14s %14s %14s\n","-------","-----------------","-----------","----------------","----------","------------","------------");
+foreach my $project (sort {$queueprojectjobs{$b} <=> $queueprojectjobs{$a}} keys %queueprojectjobs){
+  my $qusage = $queueprojectusage{$project};
+  my $qnjobs = $queueprojectjobs{$project};
+  my $usage = $projectusage{$project};
+  my $njobs = $projectjobs{$project};
+  printf("%20s %14.1f %14d %16.1f %14d %14.2f %14.2f\n",$project,$qusage,$qnjobs,$usage,$njobs,100*$qusage/$usage,100*$qnjobs/$njobs);
+}
+
+print "\nDebugq usage by project, sorted by core hours\n-------------------\n";
+printf("%20s %14s %14s %16s %14s %14s %14s\n","Project","Debugq Core Hours","Debugq Jobs","Total Core Hours","Total Jobs","% Core Hours","% Total Jobs");
+printf("%20s %14s %14s %16s %14s %14s %14s\n","-------","-----------------","-----------","----------------","----------","------------","------------");
+foreach my $project (sort {$queueprojectusage{$b} <=> $queueprojectusage{$a}} keys %queueprojectusage){
+  my $qusage = $queueprojectusage{$project};
+  my $qnjobs = $queueprojectjobs{$project};
+  my $usage = $projectusage{$project};
+  my $njobs = $projectjobs{$project};
+  printf("%20s %14.1f %14d %16.1f %14d %14.2f %14.2f\n",$project,$qusage,$qnjobs,$usage,$njobs,100*$qusage/$usage,100*$qnjobs/$njobs);
+}
+
+exit;
+
+__END__
+
+=head1 NAME
+
+pawseyAccountBalance - Get Account Information From Pawsey Systems
+
+=head1 SYNOPSIS
+
+pawseyAccountBalance [options] 
+
+ Options:
+   -cluster=name    specify cluster to query
+   -begin           start date of the query
+   -end             end date of the query
+   -help            brief help message
+
+=head1 OPTIONS
+
+=over 8
+
+=item B<-cluster>
+
+Specify cluster that you wish to query the usage for. Defaults to IVEC_CLUSTER environment variable.
+
+=back
+
+=item B<-begin>
+
+For usage, sets the start date of the query.  The default is the beginning of the current quarter.
+
+=item B<-end>
+
+For usage, sets the end date of the query.  The default is the end of the current quarter.
+
+=back
+
+=item B<-queue>
+
+The Queue to query for.  Defaults to debugq.
+
+=back
+
+=item B<-help>
+
+Print a brief help message and exits.
+
+=back
+
+=head1 DESCRIPTION
+
+B<pawseyDebugqReport> queries the Pawsey Supercomputing Centre systems for information about debugq usage.
+
+=cut
