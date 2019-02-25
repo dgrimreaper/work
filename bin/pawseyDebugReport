@@ -128,7 +128,9 @@ foreach my $user (sort {$queueuserjobs{$b} <=> $queueuserjobs{$a}} keys %queueus
   my $qnjobs = $queueuserjobs{$user};
   my $usage = $userusage{$user};
   my $njobs = $userjobs{$user};
-  printf("%20s %14.1f %14d %16.1f %14d %14.2f %14.2f\n",$user,$qusage,$qnjobs,$usage,$njobs,100*$qusage/$usage,100*$qnjobs/$njobs);
+  my $pusage = 0; if ($usage>0) { $pusage = 100*$qusage/$usage }
+  my $pjobs = 0; if ($njobs>0) { $pjobs = 100*$qnjobs/$njobs }
+  printf("%20s %14.1f %14d %16.1f %14d %14.2f %14.2f\n",$user,$qusage,$qnjobs,$usage,$njobs,$pusage,$pjobs);
 }
 
 print "\nDebugq usage by user, sorted by core hours\n-------------------\n";
@@ -139,7 +141,9 @@ foreach my $user (sort {$queueuserusage{$b} <=> $queueuserusage{$a}} keys %queue
   my $qnjobs = $queueuserjobs{$user};
   my $usage = $userusage{$user};
   my $njobs = $userjobs{$user};
-  printf("%20s %14.1f %14d %16.1f %14d %14.2f %14.2f\n",$user,$qusage,$qnjobs,$usage,$njobs,100*$qusage/$usage,100*$qnjobs/$njobs);
+  my $pusage = 0; if ($usage>0) { $pusage = 100*$qusage/$usage }
+  my $pjobs = 0; if ($njobs>0) { $pjobs = 100*$qnjobs/$njobs }
+  printf("%20s %14.1f %14d %16.1f %14d %14.2f %14.2f\n",$user,$qusage,$qnjobs,$usage,$njobs,$pusage,$pjobs);
 }
 
 print "\nDebugq usage by project, sorted by number of jobs\n-------------------\n";
@@ -150,7 +154,9 @@ foreach my $project (sort {$queueprojectjobs{$b} <=> $queueprojectjobs{$a}} keys
   my $qnjobs = $queueprojectjobs{$project};
   my $usage = $projectusage{$project};
   my $njobs = $projectjobs{$project};
-  printf("%20s %14.1f %14d %16.1f %14d %14.2f %14.2f\n",$project,$qusage,$qnjobs,$usage,$njobs,100*$qusage/$usage,100*$qnjobs/$njobs);
+  my $pusage = 0; if ($usage>0) { $pusage = 100*$qusage/$usage }
+  my $pjobs = 0; if ($njobs>0) { $pjobs = 100*$qnjobs/$njobs }
+  printf("%20s %14.1f %14d %16.1f %14d %14.2f %14.2f\n",$project,$qusage,$qnjobs,$usage,$njobs,$pusage,$pjobs);
 }
 
 print "\nDebugq usage by project, sorted by core hours\n-------------------\n";
@@ -161,7 +167,9 @@ foreach my $project (sort {$queueprojectusage{$b} <=> $queueprojectusage{$a}} ke
   my $qnjobs = $queueprojectjobs{$project};
   my $usage = $projectusage{$project};
   my $njobs = $projectjobs{$project};
-  printf("%20s %14.1f %14d %16.1f %14d %14.2f %14.2f\n",$project,$qusage,$qnjobs,$usage,$njobs,100*$qusage/$usage,100*$qnjobs/$njobs);
+  my $pusage = 0; if ($usage>0) { $pusage = 100*$qusage/$usage }
+  my $pjobs = 0; if ($njobs>0) { $pjobs = 100*$qnjobs/$njobs }
+  printf("%20s %14.1f %14d %16.1f %14d %14.2f %14.2f\n",$project,$qusage,$qnjobs,$usage,$njobs,$pusage,$pjobs);
 }
 
 exit;
