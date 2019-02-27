@@ -83,7 +83,7 @@ foreach $project (@projects) {
   $shares{$project}=0;
 }
 
-open(SHARES,"sshare -n -h -p -M \"$cluster\" |");
+open(SHARES,"sshare -n -h -p -M \"$cluster\" 2>/dev/null |");
 while(<SHARES>){
     next if /^root/;
     next if /^CLUSTER:/;
